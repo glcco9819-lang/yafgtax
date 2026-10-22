@@ -1,0 +1,315 @@
+// Accounting Office Management System - Prisma Schema
+// MVP version with all core tables
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============ USERS & AUTH ============
+
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+  displayName  String
+  role         String   @default("employee") // employee | supervisor | ceo | admin
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  companyAccess   UserCompanyAccess[]
+  createdTasks     Task[]                 @relation("TaskCreator")
+  assignedTasks    TaskAssignment[]
+  checklistAssigned TaskChecklistItem[]   @relation("ChecklistAssignee")
+  submittedWorks   WorkSubmission[]
+  decisions        ManagerDecision[]
+  leaveRequests    LeaveRequest[]       @relation("UserLeaves")
+  reviewedLeaves   LeaveRequest[]       @relation("LeaveReviewer")
+  attendanceRecords AttendanceRecord[]
+  notifications    Notification[]
+  referenceUploads ReferenceVersion[]
+  auditEvents      AuditEvent[]         @relation("ActorEvents")
+  performanceScores PerformanceScore[]
+}
+
+model Company {
+  id                 String   @id @default(cuid())
+  code               String   @unique
+  name               String
+  accountingSoftware String   @default("mixed") // hamkaran | sepidar | holo | tandis | mixed
+  isActive           Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  userAccess       UserCompanyAccess[]
+  fiscalPeriods    FiscalPeriod[]
+  tasks            Task[]
+  referenceVersions ReferenceVersion[]
+}
+
+model UserCompanyAccess {
+  id           String   @id @default(cuid())
+  userId       String
+  companyId    String
+  permissionSet String  @default("view") // view | edit | admin
+  createdAt    DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, companyId])
+}
+
+// ============ FISCAL PERIODS ============
+
+model FiscalPeriod {
+  id        String   @id @default(cuid())
+  companyId String
+  name      String   // مثلاً "سال مالی ۱۴۰۵"
+  startDate DateTime
+  endDate   DateTime
+  isClosed  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  company          Company            @relation(fields: [companyId], references: [id])
+  referenceVersions ReferenceVersion[]
+
+  @@index([companyId, startDate])
+}
+
+// ============ TASKS ============
+
+model Task {
+  id          String   @id @default(cuid())
+  companyId   String
+  title       String
+  description String?
+  createdById String
+  dueAt       DateTime?
+  priority    String   @default("medium") // low | medium | high | critical
+  weight      Int      @default(1) // 1-10 weight for evaluation
+  status      String   @default("draft") // draft | assigned | in_progress | submitted | reconciling | needs_review | returned | approved | approved_with_exception | rejected | cancelled
+  templateId  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  company   Company @relation(fields: [companyId], references: [id])
+  createdBy User    @relation("TaskCreator", fields: [createdById], references: [id])
+
+  assignments     TaskAssignment[]
+  checklistItems  TaskChecklistItem[]
+  workSubmissions WorkSubmission[]
+  referenceBindings TaskReferenceBinding[]
+
+  @@index([companyId, status, dueAt])
+  @@index([status, dueAt])
+}
+
+model TaskAssignment {
+  id            String   @id @default(cuid())
+  taskId        String
+  userId        String
+  assignmentType String   @default("primary") // primary | collaborator | reviewer
+  assignedAt    DateTime @default(now())
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([taskId, userId, assignmentType])
+}
+
+model TaskChecklistItem {
+  id          String   @id @default(cuid())
+  taskId      String
+  title       String
+  assignedToId String?
+  isCompleted Boolean  @default(false)
+  completedAt DateTime?
+  createdAt   DateTime @default(now())
+
+  task      Task    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  assignedTo User? @relation("ChecklistAssignee", fields: [assignedToId], references: [id])
+
+  @@index([taskId])
+}
+
+model TaskReferenceBinding {
+  id                 String   @id @default(cuid())
+  taskId             String
+  referenceVersionId String
+  boundAt            DateTime @default(now())
+
+  task             Task             @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  referenceVersion ReferenceVersion @relation(fields: [referenceVersionId], references: [id])
+}
+
+// ============ WORK SUBMISSIONS ============
+
+model WorkSubmission {
+  id                String   @id @default(cuid())
+  taskId            String
+  submittedById     String
+  periodStart       DateTime
+  periodEnd         DateTime
+  description       String?
+  filePath          String? // local storage path
+  fileHash          String?
+  status            String   @default("received") // received | processing | verified | mismatch_found | needs_review | approved | approved_with_exception | returned | rejected
+  submissionScore   Int?     // 0-100 score (independent of decision)
+  localJobId        String?
+  referenceVersionId String?
+  submittedAt       DateTime @default(now())
+
+  task        Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  submittedBy User   @relation(fields: [submittedById], references: [id])
+  referenceVersion ReferenceVersion? @relation(fields: [referenceVersionId], references: [id])
+  decisions   ManagerDecision[]
+
+  @@index([taskId, submittedAt])
+}
+
+// ============ MANAGER DECISIONS ============
+
+model ManagerDecision {
+  id                String   @id @default(cuid())
+  submissionId      String
+  reviewerId        String
+  decisionType      String   // approved | approved_with_exception | returned | rejected
+  reasonVisible     String?  // visible to employee
+  reasonConfidential String? // manager-only
+  score             Int?     // 0-100
+  referenceVersionId String?
+  createdAt         DateTime @default(now())
+
+  submission   WorkSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  reviewer     User           @relation(fields: [reviewerId], references: [id])
+
+  @@index([submissionId])
+}
+
+// ============ REFERENCE VERSIONS ============
+
+model ReferenceVersion {
+  id            String   @id @default(cuid())
+  companyId     String
+  fiscalPeriodId String?
+  versionNumber Int      @default(1)
+  uploadedById  String
+  fileHash      String?
+  filePath      String?
+  dateRangeStart DateTime?
+  dateRangeEnd  DateTime?
+  status        String   @default("active") // active | superseded | archived
+  notes         String?
+  createdAt     DateTime @default(now())
+
+  company     Company       @relation(fields: [companyId], references: [id])
+  fiscalPeriod FiscalPeriod? @relation(fields: [fiscalPeriodId], references: [id])
+  uploadedBy  User          @relation(fields: [uploadedById], references: [id])
+
+  taskBindings  TaskReferenceBinding[]
+  workSubmissions WorkSubmission[]
+
+  @@index([companyId, versionNumber])
+}
+
+// ============ HR MODULE ============
+
+model LeaveRequest {
+  id          String   @id @default(cuid())
+  userId      String
+  startAt     DateTime
+  endAt       DateTime
+  reason      String
+  leaveType   String   @default("personal") // personal | sick | emergency | vacation
+  status      String   @default("pending") // pending | approved | rejected
+  reviewedById String?
+  reviewNotes String?
+  createdAt   DateTime @default(now())
+  reviewedAt  DateTime?
+
+  user       User   @relation("UserLeaves", fields: [userId], references: [id])
+  reviewedBy User?  @relation("LeaveReviewer", fields: [reviewedById], references: [id])
+
+  @@index([userId, status])
+}
+
+model AttendanceRecord {
+  id        String   @id @default(cuid())
+  userId    String
+  eventType String   // check_in | check_out
+  eventTime DateTime @default(now())
+  source    String   @default("manual") // manual | device
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, eventTime])
+}
+
+// ============ NOTIFICATIONS ============
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  eventKey  String   @unique
+  type      String   // task_assigned | due_soon | overdue | submission_received | mismatch_found | decision_made | leave_request
+  title     String
+  message   String?
+  isRead    Boolean  @default(false)
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, isRead, createdAt])
+}
+
+// ============ AUDIT LOG ============
+
+model AuditEvent {
+  id            String   @id @default(cuid())
+  actorId       String?
+  action        String   // create | update | delete | login | logout | approve | reject
+  objectType    String   // task | submission | decision | user | company
+  objectId      String?
+  occurredAt    DateTime @default(now())
+  correlationId String?
+  previousState String?  // JSON snapshot
+  newState      String?  // JSON snapshot
+  reason        String?
+
+  actor User? @relation("ActorEvents", fields: [actorId], references: [id])
+
+  @@index([actorId, occurredAt])
+  @@index([objectType, objectId, occurredAt])
+}
+
+// ============ PERFORMANCE EVALUATION ============
+
+model PerformanceScore {
+  id                String   @id @default(cuid())
+  userId            String
+  periodStart       DateTime
+  periodEnd         DateTime
+  qualityScore      Float?   // 0-100 based on manager scores (40%)
+  onTimeScore       Float?   // 0-100 (25%)
+  volumeScore       Float?   // 0-100 (20%)
+  collaborationScore Float?  // 0-100 (15%)
+  totalScore        Float?   // weighted sum
+  rank              Int?     // rank in office
+  taskCount         Int      @default(0)
+  approvedCount     Int      @default(0)
+  returnedCount     Int      @default(0)
+  exceptionCount    Int      @default(0)
+  createdAt         DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, periodStart])
+}
