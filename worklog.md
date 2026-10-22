@@ -94,3 +94,68 @@ Stage Summary:
   - Added: Replacement detection logic for SourceLineID changes after delete-recreate
   - Updated: Final recommendation emphasizes all 4 v1 + 4 v2 decisions
 - Scripts saved to /home/z/my-project/scripts/ for future iteration
+
+---
+Task ID: build-program
+Agent: main
+Task: Build technical spec document + task list + implement Next.js MVP for accounting office management system, push to GitHub.
+
+Work Log:
+- Generated technical specification PDF (سند_تخصصی_معماری_امنیت_ساختار_الگوریتم.pdf) with 8 chapters: architecture, security, structure, algorithm, tech stack, API spec, implementation phases, checklist.
+- Generated task list PDF (سند_تسک‌لیست_اجرایی_MVP.pdf) with 51 tasks across 5 phases (13 weeks total).
+- Loaded fullstack-dev skill and initialized Next.js 16 project.
+- Defined comprehensive Prisma schema with 18 models (User, Company, Task, WorkSubmission, ManagerDecision, ReferenceVersion, etc.).
+- Pushed schema to SQLite database successfully.
+- Implemented 12 API endpoints:
+  - POST /api/auth/login (login with JWT)
+  - GET /api/auth/me (current user)
+  - GET/POST /api/companies (CRUD with RBAC)
+  - GET/POST /api/users (CRUD with role check)
+  - GET/POST /api/tasks (with assignments and notifications)
+  - GET/PATCH /api/tasks/[id] (task detail and update)
+  - POST /api/tasks/[id]/submit (work submission with Excel upload + SHA-256 hash + idempotency check)
+  - POST /api/submissions/[id]/decision (4 decision types + score 0-100 + two-level notes)
+  - GET/POST /api/reference-versions (versioned reference files)
+  - GET/POST /api/leave-requests + decision endpoint
+  - POST /api/attendance/check-in, /check-out (daily idempotency)
+  - GET /api/dashboard (stats + recent activity)
+  - POST /api/seed (initial demo data)
+- Built single-page application (SPA) UI in src/app/page.tsx with 5 tabs:
+  - Overview (stats cards + recent submissions + activity log)
+  - Tasks (list + detail + create + submit + decision)
+  - Companies (table + create)
+  - Users (table + create) - admin/supervisor/ceo only
+  - HR (attendance check-in/out + leave requests)
+- Set RTL Persian layout in layout.tsx with lang="fa" dir="rtl".
+- Tested with browser automation: login, dashboard, tasks tab, task detail, HR tab - all working.
+- Created comprehensive README.md in Persian with setup instructions and feature list.
+- Created .env.example with all required environment variables.
+- Updated .gitignore to exclude: .env, db/, upload/, scripts/, fonts/, tool-results/, .zscripts/, .z-ai-config/, *.log, *.db.
+- Committed with detailed message and pushed to https://github.com/glcco9819-lang/YFGTAXES.git (branch: main).
+- Removed GitHub token from remote URL after push for security.
+
+Stage Summary:
+- Final deliverables (all saved to /home/z/my-project/download/):
+  1. سند_تخصصی_معماری_امنیت_ساختار_الگوریتم.pdf (technical spec, 8 chapters)
+  2. سند_تسک‌لیست_اجرایی_MVP.pdf (51 tasks, 5 phases, 13 weeks)
+  3. dashboard_screenshot.png (visual proof of working UI)
+  4. task_detail_screenshot.png (task detail page)
+  5. hr_tab_screenshot.png (HR module)
+- GitHub: https://github.com/glcco9819-lang/YFGTAXES.git (main branch, public)
+- MVP implemented with all key features from user's text file:
+  ✓ Login + RBAC (4 roles)
+  ✓ Companies (up to 5000)
+  ✓ Tasks with priority, weight, assignments
+  ✓ Work submissions with Excel upload + idempotency
+  ✓ Optional reference file versioning
+  ✓ 4 decision types: approve/exception/return/reject
+  ✓ Score 0-100 independent of decision
+  ✓ Two-level notes (visible/confidential)
+  ✓ Leave requests with approval
+  ✓ Attendance check-in/out
+  ✓ Audit log
+  ✓ Notifications
+- Tech stack: Next.js 16, TypeScript, Tailwind, Prisma, SQLite
+- Login credentials (after /api/seed): admin/admin123, supervisor/super123, ceo/ceo123, emp1-5/emp123
+
+⚠️ SECURITY: User's GitHub Personal Access Token was exposed in chat. It was used only for push and removed from remote URL. User should rotate this token in GitHub settings.
