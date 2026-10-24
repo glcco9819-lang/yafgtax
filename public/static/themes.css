@@ -1,0 +1,588 @@
+/* YFG Theme System — Day/Night only
+   Two themes: day (light, default) and night (dark)
+   Default = day (light, original YFG style.css look)
+   Override is minimal — only what's needed for night theme
+*/
+
+/* ==================== DAY THEME (default — light) ==================== */
+/* This is implicit — uses style.css's :root variables directly, no overrides needed */
+:root {
+  --theme-name: 'day';
+}
+
+/* ==================== NIGHT THEME (شب) ==================== */
+/* Override variables + element backgrounds that hardcode light colors */
+[data-theme="night"] {
+  /* Color variables */
+  --bg: #070c11;
+  --ink: #ffffff;
+  --muted: #94a3b8;
+  --line: rgba(255,255,255,0.08);
+  --teal: #14b8a6;
+  --teal2: #0d9488;
+  --mint: rgba(20, 184, 166, 0.12);
+  --navy: #0d1419;
+  --white: #0d1419;   /* Cards/panels become dark */
+  --danger: #f87171;
+  --shadow: 0 12px 36px rgba(0,0,0,0.4);
+
+  /* Override body */
+  --bg-yfg: #070c11;
+}
+
+[data-theme="night"] body {
+  background: #070c11 !important;
+  color: #ffffff !important;
+}
+
+/* Sidebar — keep dark navy (already dark in style.css) but adjust slightly */
+[data-theme="night"] .sidebar {
+  background: #0a1218 !important;
+  color: #c8d3d3 !important;
+  border-left: 1px solid rgba(255,255,255,0.06);
+}
+
+[data-theme="night"] .brand strong { color: #ffffff; }
+[data-theme="night"] .brand span { color: #6b8a8d; }
+[data-theme="night"] .workspace-label { color: #6b8a8d; }
+[data-theme="night"] .nav-item { color: #94a8aa; }
+[data-theme="night"] .nav-item:hover { background: rgba(255,255,255,0.06); color: #ffffff; }
+[data-theme="night"] .nav-item.active { background: #14b8a6; color: #070c11; }
+[data-theme="night"] .nav-icon { color: inherit; }
+
+[data-theme="night"] .secure-note {
+  background: rgba(56, 199, 164, 0.06);
+  border-color: rgba(56, 199, 164, 0.15);
+}
+[data-theme="night"] .secure-note b { color: #ffffff; }
+[data-theme="night"] .secure-note small { color: #7a9498; }
+[data-theme="night"] .sidebar-version { color: #6b8a8d; border-color: rgba(255,255,255,0.06); }
+
+/* Topbar */
+[data-theme="night"] .topbar {
+  background: rgba(13, 20, 25, 0.85) !important;
+  backdrop-filter: blur(12px);
+  border-bottom-color: rgba(255,255,255,0.08) !important;
+}
+[data-theme="night"] .crumb { color: #6b8a8d; }
+[data-theme="night"] .crumb i { color: #4a5c5e; }
+[data-theme="night"] .crumb b { color: #ffffff; }
+
+/* Icon buttons (topbar) */
+[data-theme="night"] .icon-btn {
+  background: #0d1419 !important;
+  border-color: rgba(255,255,255,0.10) !important;
+  color: #94a8aa !important;
+}
+[data-theme="night"] .icon-btn:hover {
+  border-color: #14b8a6 !important;
+  color: #14b8a6 !important;
+}
+
+/* User menu */
+[data-theme="night"] .user-menu { border-right-color: rgba(255,255,255,0.08) !important; }
+[data-theme="night"] .avatar { background: rgba(20, 184, 166, 0.18); color: #14b8a6; }
+[data-theme="night"] .user-id b { color: #ffffff; }
+[data-theme="night"] .user-id small { color: #94a8aa; }
+[data-theme="night"] .logout-btn { color: #94a8aa; }
+
+/* Stat cards, panels, table cards */
+[data-theme="night"] .stat-card,
+[data-theme="night"] .panel,
+[data-theme="night"] .table-card {
+  background: #0d1419 !important;
+  border-color: rgba(255,255,255,0.08) !important;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.3) !important;
+}
+[data-theme="night"] .stat-top { color: #94a8aa !important; }
+[data-theme="night"] .stat-icon { background: rgba(20, 184, 166, 0.18); color: #14b8a6; }
+[data-theme="night"] .stat-value { color: #ffffff; }
+[data-theme="night"] .stat-caption { color: #6b8a8d; }
+[data-theme="night"] .stat-card:after { background: rgba(20, 184, 166, 0.12); }
+
+/* Panels headers */
+[data-theme="night"] .panel-head h3 { color: #ffffff; }
+[data-theme="night"] .panel-head p { color: #6b8a8d; }
+[data-theme="night"] .text-link { color: #14b8a6; }
+
+/* Page head */
+[data-theme="night"] .page-head h1 { color: #ffffff; }
+[data-theme="night"] .page-head p { color: #94a8aa; }
+[data-theme="night"] .eyebrow { color: #14b8a6; }
+
+/* Buttons */
+[data-theme="night"] .btn.primary { background: #14b8a6; color: #070c11; box-shadow: 0 5px 13px rgba(20, 184, 166, 0.3); }
+[data-theme="night"] .btn.primary:hover { background: #0d9488; }
+[data-theme="night"] .btn.soft {
+  background: rgba(20, 184, 166, 0.12);
+  color: #14b8a6;
+  border-color: rgba(20, 184, 166, 0.25);
+}
+[data-theme="night"] .btn.soft:hover { background: rgba(20, 184, 166, 0.20); }
+[data-theme="night"] .btn.ghost {
+  background: rgba(255,255,255,0.04);
+  border-color: rgba(255,255,255,0.08);
+  color: #94a8aa;
+}
+[data-theme="night"] .btn.ghost:hover { color: #ffffff; }
+[data-theme="night"] .btn.danger {
+  background: rgba(248, 113, 113, 0.12);
+  color: #f87171;
+  border-color: rgba(248, 113, 113, 0.25);
+}
+
+/* Inputs, fields, select, textarea */
+[data-theme="night"] .field,
+[data-theme="night"] input,
+[data-theme="night"] select,
+[data-theme="night"] textarea,
+[data-theme="night"] .filter-input {
+  background: #0a1218 !important;
+  color: #ffffff !important;
+  border-color: rgba(255,255,255,0.10) !important;
+}
+[data-theme="night"] .field:focus,
+[data-theme="night"] input:focus,
+[data-theme="night"] select:focus,
+[data-theme="night"] textarea:focus,
+[data-theme="night"] .filter-input:focus {
+  border-color: #14b8a6 !important;
+  box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.18) !important;
+}
+
+/* Labels */
+[data-theme="night"] label { color: #94a8aa; }
+
+/* Hints, muted text, sub-text */
+[data-theme="night"] .hint { color: #6b8a8d; }
+[data-theme="night"] .muted { color: #94a8aa; }
+[data-theme="night"] .task-sub { color: #6b8a8d; }
+
+/* Tables */
+[data-theme="night"] .data-table th {
+  background: rgba(255,255,255,0.04) !important;
+  color: #94a8aa !important;
+  border-bottom: 1px solid rgba(255,255,255,0.08) !important;
+}
+[data-theme="night"] .data-table td {
+  color: #e2e8f0 !important;
+  border-top-color: rgba(255,255,255,0.04) !important;
+}
+[data-theme="night"] .data-table tr:hover td {
+  background: rgba(20, 184, 166, 0.05) !important;
+}
+
+/* Table action buttons */
+[data-theme="night"] .table-actions button {
+  background: rgba(255,255,255,0.04) !important;
+  border-color: rgba(255,255,255,0.08) !important;
+  color: #94a8aa !important;
+}
+[data-theme="night"] .table-actions button:hover {
+  color: #14b8a6 !important;
+  border-color: #14b8a6 !important;
+}
+
+/* Status tags */
+[data-theme="night"] .status {
+  background: rgba(255,255,255,0.06) !important;
+  color: #94a8aa !important;
+}
+[data-theme="night"] .status.ASSIGNED,
+[data-theme="night"] .status.IN_PROGRESS {
+  background: rgba(20, 184, 166, 0.15) !important;
+  color: #5eead4 !important;
+}
+[data-theme="night"] .status.SUBMITTED,
+[data-theme="night"] .status.NEEDS_REVIEW {
+  background: rgba(245, 158, 11, 0.15) !important;
+  color: #fbbf24 !important;
+}
+[data-theme="night"] .status.RETURNED {
+  background: rgba(239, 68, 68, 0.15) !important;
+  color: #f87171 !important;
+}
+[data-theme="night"] .status.APPROVED,
+[data-theme="night"] .status.APPROVED_WITH_EXCEPTION {
+  background: rgba(34, 197, 94, 0.15) !important;
+  color: #4ade80 !important;
+}
+[data-theme="night"] .status.CANCELLED {
+  background: rgba(100, 116, 139, 0.15) !important;
+  color: #94a3b8 !important;
+}
+[data-theme="night"] .status.NEEDS_EDIT {
+  background: rgba(245, 158, 11, 0.15) !important;
+  color: #fbbf24 !important;
+}
+
+/* Quick actions */
+[data-theme="night"] .quick-action {
+  background: #0d1419 !important;
+  border-color: rgba(255,255,255,0.08) !important;
+  color: #ffffff !important;
+}
+[data-theme="night"] .quick-action:hover {
+  border-color: #14b8a6 !important;
+  box-shadow: 0 12px 24px rgba(0,0,0,0.3) !important;
+}
+[data-theme="night"] .quick-action span { color: #14b8a6; }
+[data-theme="night"] .quick-action b { color: #ffffff; }
+[data-theme="night"] .quick-action small { color: #6b8a8d; }
+
+/* Modal */
+[data-theme="night"] .modal-backdrop {
+  background: rgba(0, 0, 0, 0.7) !important;
+  backdrop-filter: blur(8px);
+}
+[data-theme="night"] .modal {
+  background: #0d1419 !important;
+  box-shadow: 0 25px 80px rgba(0,0,0,0.6) !important;
+  border: 1px solid rgba(255,255,255,0.08);
+}
+[data-theme="night"] .modal-head {
+  border-bottom-color: rgba(255,255,255,0.08) !important;
+}
+[data-theme="night"] .modal-head h2 { color: #ffffff; }
+[data-theme="night"] .modal-head p { color: #6b8a8d; }
+[data-theme="night"] .close-modal {
+  background: rgba(255,255,255,0.06) !important;
+  color: #94a8aa !important;
+}
+[data-theme="night"] .close-modal:hover {
+  background: rgba(239, 68, 68, 0.15) !important;
+  color: #f87171 !important;
+}
+
+/* Decision box */
+[data-theme="night"] .decision-box {
+  background: rgba(20, 184, 166, 0.05) !important;
+  border-color: rgba(20, 184, 166, 0.15) !important;
+}
+
+/* Section title */
+[data-theme="night"] .section-title { color: #ffffff; }
+
+/* Tabs */
+[data-theme="night"] .tabs { border-bottom-color: rgba(255,255,255,0.08) !important; }
+[data-theme="night"] .tab { color: #94a8aa; }
+[data-theme="night"] .tab.active { color: #14b8a6 !important; border-color: #14b8a6 !important; }
+
+/* History items */
+[data-theme="night"] .history-item {
+  border-right-color: #14b8a6 !important;
+}
+[data-theme="night"] .history-item b { color: #ffffff; }
+[data-theme="night"] .history-item small { color: #6b8a8d; }
+
+/* Notice items */
+[data-theme="night"] .notice-item {
+  border-top-color: rgba(255,255,255,0.06) !important;
+}
+[data-theme="night"] .notice-item b { color: #ffffff; }
+[data-theme="night"] .notice-item small { color: #6b8a8d; }
+[data-theme="night"] .notice-mark { background: #fbbf24; }
+
+/* Tag */
+[data-theme="night"] .tag {
+  background: rgba(255,255,255,0.06) !important;
+  color: #94a8aa !important;
+}
+
+/* Alert */
+[data-theme="night"] .alert { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); }
+[data-theme="night"] .alert.success { background: rgba(34, 197, 94, 0.10); color: #4ade80; border-color: rgba(34, 197, 94, 0.20); }
+[data-theme="night"] .alert.error { background: rgba(239, 68, 68, 0.10); color: #f87171; border-color: rgba(239, 68, 68, 0.20); }
+
+/* Toast */
+[data-theme="night"] .toast {
+  background: #0d1419 !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(255,255,255,0.08);
+  box-shadow: 0 12px 36px rgba(0,0,0,0.5);
+}
+
+/* Auth view */
+[data-theme="night"] .auth-wrap { background: #070c11; }
+[data-theme="night"] .auth-card { background: #0d1419 !important; }
+[data-theme="night"] .auth-card h1 { color: #ffffff; }
+[data-theme="night"] .muted { color: #94a8aa; }
+[data-theme="night"] .auth-card input {
+  background: #070c11 !important;
+  color: #ffffff !important;
+  border-color: rgba(255,255,255,0.10) !important;
+}
+[data-theme="night"] .auth-foot {
+  color: #6b8a8d !important;
+  border-top-color: rgba(255,255,255,0.06) !important;
+}
+[data-theme="night"] .auth-aside {
+  background: linear-gradient(145deg, #0a1218, #0d9488) !important;
+}
+
+/* Empty state */
+[data-theme="night"] .empty-state {
+  color: #6b8a8d;
+}
+[data-theme="night"] .empty-state .empty-icon { color: #4a5c5e; }
+[data-theme="night"] .empty-state b { color: #94a8aa; }
+
+/* File drop */
+[data-theme="night"] .file-drop {
+  background: rgba(20, 184, 166, 0.04) !important;
+  border-color: rgba(20, 184, 166, 0.20) !important;
+  color: #94a8aa !important;
+}
+
+/* Score card */
+[data-theme="night"] .score-card { border-top-color: rgba(255,255,255,0.06) !important; color: #94a8aa; }
+[data-theme="night"] .score-card.header {
+  background: rgba(255,255,255,0.04) !important;
+  color: #6b8a8d !important;
+}
+[data-theme="night"] .score { color: #14b8a6 !important; }
+
+/* Attendance clock */
+[data-theme="night"] .attendance-clock .clock-time { color: #ffffff !important; }
+[data-theme="night"] .attendance-clock .clock-date { color: #94a8aa !important; }
+
+/* Notification dot */
+[data-theme="night"] .dot { border-color: #0d1419 !important; }
+
+/* Notification panel */
+[data-theme="night"] .notification-panel {
+  background: #0d1419 !important;
+  border-color: rgba(255,255,255,0.08) !important;
+  box-shadow: 0 12px 36px rgba(0,0,0,0.5) !important;
+}
+[data-theme="night"] .notification-panel h3 { color: #ffffff; }
+
+/* Check row */
+[data-theme="night"] .check-row { color: #94a8aa; }
+
+/* Filterbar */
+[data-theme="night"] .filter-input {
+  background: #0a1218 !important;
+  color: #ffffff !important;
+}
+
+/* Code/monospace areas (KPI formula field etc.) */
+[data-theme="night"] input[style*="font-family:monospace"] {
+  background: #070c11 !important;
+  color: #5eead4 !important;
+}
+
+/* Tables — header rows in KPI/settings */
+[data-theme="night"] .data-table thead { color: #94a8aa; }
+
+/* Pill (used in KPI report) */
+[data-theme="night"] .pill { color: #ffffff; }
+
+/* Modal Root — for dynamically inserted modals */
+[data-theme="night"] #modalRoot > div > div {
+  background: #0d1419 !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(255,255,255,0.08) !important;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.5) !important;
+}
+
+/* Modal h2, h3, h4 */
+[data-theme="night"] .modal h2,
+[data-theme="night"] .modal h3,
+[data-theme="night"] .modal h4,
+[data-theme="night"] #modalRoot h2,
+[data-theme="night"] #modalRoot h3,
+[data-theme="night"] #modalRoot h4 { color: #ffffff !important; }
+
+/* Modal small text */
+[data-theme="night"] .modal small,
+[data-theme="night"] #modalRoot small { color: #6b8a8d !important; }
+
+/* Modal tables (KPI detail modal) */
+[data-theme="night"] .modal table th,
+[data-theme="night"] #modalRoot table th {
+  background: rgba(255,255,255,0.04) !important;
+  color: #94a8aa !important;
+  border-bottom: 1px solid rgba(255,255,255,0.08) !important;
+}
+[data-theme="night"] .modal table td,
+[data-theme="night"] #modalRoot table td {
+  color: #e2e8f0 !important;
+  border-bottom: 1px solid rgba(255,255,255,0.04) !important;
+}
+
+/* Settings tabs */
+[data-theme="night"] .tabs .tab { color: #94a8aa; }
+[data-theme="night"] .tabs .tab.active { color: #14b8a6; border-color: #14b8a6; }
+
+/* Buttons in modal forms */
+[data-theme="night"] .modal .btn.soft,
+[data-theme="night"] #modalRoot .btn.soft {
+  background: rgba(20, 184, 166, 0.12);
+  color: #14b8a6;
+  border-color: rgba(20, 184, 166, 0.25);
+}
+
+/* Form textareas inside modals */
+[data-theme="night"] .modal textarea,
+[data-theme="night"] #modalRoot textarea {
+  background: #0a1218 !important;
+  color: #ffffff !important;
+}
+
+/* Spinner/loader area for empty */
+[data-theme="night"] .empty-state,
+[data-theme="night"] .empty {
+  color: #6b8a8d;
+}
+
+/* Body background grid overlay (subtle for night mode) */
+[data-theme="night"] body {
+  background-image:
+    linear-gradient(rgba(255,255,255,0.015) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.015) 1px, transparent 1px);
+  background-size: 60px 60px;
+  background-attachment: fixed;
+}
+
+/* Kanban view — dark backgrounds */
+[data-theme="night"] [style*="background:#f1f5f9"] { background: #0d1419 !important; }
+[data-theme="night"] [style*="background:#e2e8f0"] { background: rgba(255,255,255,0.08) !important; }
+[data-theme="night"] [style*="background:#fff;padding:12px"] { background: #0a1218 !important; }
+
+/* KPI pills — light blue pills need dark variant */
+[data-theme="night"] [style*="background:#e0f2fe"] {
+  background: rgba(20, 184, 166, 0.15) !important;
+  color: #5eead4 !important;
+}
+
+/* Inline colored buttons — make sure visible in night */
+[data-theme="night"] [style*="background:#fee2e2"] {
+  background: rgba(239, 68, 68, 0.15) !important;
+  color: #f87171 !important;
+}
+[data-theme="night"] [style*="background:#d1fae5"] {
+  background: rgba(34, 197, 94, 0.15) !important;
+  color: #4ade80 !important;
+}
+[data-theme="night"] [style*="background:#fef3c7"] {
+  background: rgba(245, 158, 11, 0.15) !important;
+  color: #fbbf24 !important;
+}
+[data-theme="night"] [style*="background:#f8fafc"] { background: rgba(255,255,255,0.03) !important; }
+[data-theme="night"] [style*="background:#dcfce7"] { background: rgba(34, 197, 94, 0.15) !important; }
+
+/* KPI report badge backgrounds */
+[data-theme="night"] [style*="background:#10b981"] { background: #14b8a6 !important; color: #070c11 !important; }
+[data-theme="night"] [style*="background:#f59e0b"] { background: #fbbf24 !important; color: #070c11 !important; }
+[data-theme="night"] [style*="background:#ef4444"] { background: #f87171 !important; color: #ffffff !important; }
+[data-theme="night"] [style*="background:#0b8f89"] { background: #14b8a6 !important; color: #070c11 !important; }
+
+/* KPI progress bars (inline styled) */
+[data-theme="night"] [style*="background:#f1f5f9"] { background: rgba(255,255,255,0.06) !important; }
+
+/* Modal inline-styled panels (KPI detail modal, etc.) */
+[data-theme="night"] #modalRoot [style*="background:#f8fafc"] { background: rgba(255,255,255,0.03) !important; }
+[data-theme="night"] #modalRoot [style*="background:#dcfce7"] { background: rgba(34, 197, 94, 0.15) !important; color: #4ade80 !important; }
+[data-theme="night"] #modalRoot [style*="background:#fee2e2"] { background: rgba(239, 68, 68, 0.15) !important; color: #f87171 !important; }
+[data-theme="night"] #modalRoot [style*="background:#f1f5f9"] { background: #0d1419 !important; }
+
+/* Progress bar (background track) */
+[data-theme="night"] .progress { background: rgba(255,255,255,0.06) !important; }
+[data-theme="night"] .progress-num { color: #94a8aa !important; }
+
+/* Company card */
+[data-theme="night"] .company-card {
+  background: #0d1419 !important;
+  border-color: rgba(255,255,255,0.08) !important;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.3) !important;
+}
+[data-theme="night"] .company-card h3 { color: #ffffff; }
+[data-theme="night"] .company-card p { color: #94a8aa; }
+[data-theme="night"] .company-code { color: #14b8a6; }
+[data-theme="night"] .company-card .company-actions button { color: #94a8aa; }
+
+/* Mobile menu button */
+[data-theme="night"] .mobile-menu {
+  background: transparent !important;
+  border-color: rgba(255,255,255,0.08) !important;
+  color: #94a8aa !important;
+}
+
+/* Modal close button */
+[data-theme="night"] .close-modal {
+  background: rgba(255,255,255,0.06) !important;
+  color: #94a8aa !important;
+  border: 0 !important;
+}
+
+/* Empty state */
+[data-theme="night"] .empty { color: #6b8a8d !important; }
+
+/* Deadline text */
+[data-theme="night"] .deadline { color: #94a8aa !important; }
+
+/* Task title / task company */
+[data-theme="night"] .task-title { color: #ffffff !important; }
+[data-theme="night"] .task-company { color: #94a8aa !important; }
+[data-theme="night"] .task-list .task-row { border-top-color: rgba(255,255,255,0.04) !important; }
+
+/* Eyebrow text */
+[data-theme="night"] .eyebrow { color: #14b8a6 !important; }
+[data-theme="night"] .eyebrow.light { color: #76d2c7 !important; }
+
+/* Auth aside content (already handled but make sure) */
+[data-theme="night"] .auth-aside-content { color: #ffffff; }
+[data-theme="night"] .auth-aside h2 { color: #ffffff; }
+[data-theme="night"] .auth-aside p { color: #b6d1d2; }
+[data-theme="night"] .pill-row span {
+  border-color: rgba(255,255,255,0.20) !important;
+  color: #cae7e5 !important;
+}
+
+/* ==================== TOPBAR THEME TOGGLE BUTTON ==================== */
+/* The toggle button itself — works on both themes */
+.yfg-theme-toggle {
+  height: 37px !important;
+  width: auto !important;
+  min-width: 42px !important;
+  padding: 0 12px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  font-family: Vazirmatn, system-ui, sans-serif !important;
+  font-size: 14px !important;
+  cursor: pointer !important;
+  border-radius: 11px !important;
+  transition: all 0.2s !important;
+}
+.yfg-theme-toggle .theme-icon { font-size: 18px; line-height: 1; }
+.yfg-theme-toggle .theme-label { font-size: 11px; }
+
+/* Day theme toggle button styling */
+[data-theme="day"] .yfg-theme-toggle,
+.yfg-theme-toggle {
+  background: #fff !important;
+  border: 1px solid #e7edef !important;
+  color: #62747a !important;
+}
+[data-theme="day"] .yfg-theme-toggle:hover,
+.yfg-theme-toggle:hover {
+  background: rgba(11, 143, 137, 0.08) !important;
+  border-color: #b7d9d5 !important;
+  color: #0b8f89 !important;
+}
+[data-theme="day"] .yfg-theme-toggle .theme-label { color: #75858b; }
+
+/* Night theme toggle button styling */
+[data-theme="night"] .yfg-theme-toggle {
+  background: #0d1419 !important;
+  border: 1px solid rgba(255,255,255,0.10) !important;
+  color: #94a8aa !important;
+}
+[data-theme="night"] .yfg-theme-toggle:hover {
+  background: rgba(20, 184, 166, 0.10) !important;
+  border-color: #14b8a6 !important;
+  color: #14b8a6 !important;
+}
+[data-theme="night"] .yfg-theme-toggle .theme-label { color: #94a8aa; }
