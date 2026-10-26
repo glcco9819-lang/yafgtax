@@ -159,3 +159,29 @@ Stage Summary:
 - Login credentials (after /api/seed): admin/admin123, supervisor/super123, ceo/ceo123, emp1-5/emp123
 
 ⚠️ SECURITY: User's GitHub Personal Access Token was exposed in chat. It was used only for push and removed from remote URL. User should rotate this token in GitHub settings.
+---
+Task ID: settings-pro-v2
+Agent: main
+Task: حرفه‌ای‌سازی تب تنظیمات — تعریف شرکت (حقیقی/حقوقی)، کاربران با فیلدهای کامل، نقش‌ها و دسترسی‌های ریزفیلد + push
+
+Work Log:
+- بررسی ساختار فعلی: users/companies/company_access/role_types schema، endpointها، enhanced.js (IIFE در خط 819 بسته می‌شود؛ کد بعدش global است و از globalهای app.js استفاده می‌کند)
+- مهاجرت دیتابیس: companies +9 فیلد (kind, first_name, last_name, national_id, phone, address, postal_code, manager_name, manager_phone)؛ users +4 فیلد (first_name, last_name, phone, permissions JSON)
+- سیستم دسترسی ریزفیلد: PERMISSION_CATALOG با ۳۰ مجوز در ۷ گروه؛ effective_permissions/has_perm/require_perm؛ override JSON روی users.permissions؛ محافظت ضد قفل‌شدگی ADMIN
+- اعمال require_perm روی ۳۸ endpoint (شرکت‌ها، کاربران، تسک‌ها، تصمیم، مرجع، ممیزی، KPI، انواع، اتوماسیون، ISO، عملکرد، درخواست‌ها)
+- endpointهای جدید: GET /api/permissions/catalog، GET/PUT /api/users/{id}/permissions؛ /api/me شامل permissions
+- add_user/update_user: password2 mismatch check، ساخت نام از نام+فامیل، جایگزینی کامل company_ids
+- add_company/update_company: همه فیلدهای جدید؛ نام خودکار برای حقیقی از نام+فامیل
+- فرانت (enhanced.js): renderSettings با ۸ زیرتب (تعریف شرکت، کاربران، نقش‌ها و دسترسی‌ها + ۵ تب قبلی)؛ renderCompaniesRich/renderUsersRich/renderPermsRich با مودال‌های حرفه‌ای به‌جای prompt()؛ ماتریس دسترسی با گروه‌بندی + بخش «شرکت‌های قابل مشاهده» با نکته «هر کاربر فقط اطلاعات شرکت‌های منتخب را می‌بیند»
+- delegate کردن renderUserManagement/renderCompanyManagement قدیمی به نسخه‌های rich
+- nav gating بر اساس state.me.permissions (audit/users/companies/performance/iso/automations/settings)
+- SW v12→v13 + asset versions 20261027a
+- سرور restart شد؛ ۲۴ تست E2E همه پاس (ساخت شرکت حقیقی/حقوقی، اعتبارسنجی رمز، ماتریس دسترسی، scoping شرکت، جلوگیری از قفل‌شدگی، ...)
+- داده‌های تست از دیتابیس پاک شد (testadmin، tkuserها، شرکت‌های TK/TP)
+- watchdog بازسازی و فعال شد (scripts/yfg_watchdog.sh)
+- Commit d4d8b68 push شد به yafgtax.git و از URL پاک شد
+
+Stage Summary:
+- تب تنظیمات حالا حرفه‌ای: ۸ زیرتب با ۳ زیرتب جدید (تعریف شرکت، کاربران، نقش‌ها و دسترسی‌ها)
+- ۳۰ مجوز ریزفیلد سمت سرور اعمال می‌شود؛ تغییر دسترسی فوراً نشست کاربر را باطل می‌کند
+- همه‌چیز روی GitHub (commit d4d8b68)؛ سرورها سالم؛ watchdog فعال
