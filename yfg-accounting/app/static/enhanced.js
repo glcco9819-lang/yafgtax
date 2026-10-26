@@ -295,114 +295,9 @@
   async function renderUserManagement() {
     const section = document.getElementById('view-users');
     if (!section) return;
-    try {
-      const users = await api('/users');
-      const roleLabels = {ADMIN:'مدیر سامانه',CEO:'مدیرعامل',EMPLOYEE:'کارمند'};
-      section.innerHTML = `
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-          <h1>مدیریت کاربران</h1>
-          <button class="btn primary small" onclick="window.__addUser()">＋ کاربر جدید</button>
-        </div>
-        <div class="table-card">
-          <table class="data-table">
-            <thead><tr><th>نام</th><th>نام کاربری</th><th>نقش</th><th>وضعیت</th><th>شرکت‌ها</th><th>تسک‌ها</th><th>عملیات</th></tr></thead>
-            <tbody>
-              ${(users||[]).map(u => `
-                <tr>
-                  <td><strong>${esc(u.name)}</strong></td>
-                  <td class="font-mono">${esc(u.username)}</td>
-                  <td><span class="tag">${roleLabels[u.role]||u.role}</span></td>
-                  <td>${u.active?'<span style="color:#10b981;">✓ فعال</span>':'<span style="color:#ef4444;">✗ غیرفعال</span>'}</td>
-                  <td><button class="btn soft small" onclick="window.__manageAccess('${u.id}','${esc(u.name)}')">مدیریت دسترسی</button></td>
-                  <td>${u.task_count||0}</td>
-                  <td style="display:flex;gap:4px;">
-                    <button class="btn soft small" onclick="window.__editUser('${u.id}','${esc(u.name)}','${u.role}',${u.active})">✎ ویرایش</button>
-                    ${u.active?`<button class="btn small" style="background:#fee2e2;color:#991b1b;" onclick="window.__deactivateUser('${u.id}','${esc(u.name)}')">✗ غیرفعال</button>`:`<button class="btn small" style="background:#d1fae5;color:#065f46;" onclick="window.__activateUser('${u.id}')">✓ فعال</button>`}
-                  </td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        </div>
-      `;
-      window.__addUser = () => {
-        const name = prompt('نام و نام خانوادگی:');
-        if (!name) return;
-        const username = prompt('نام کاربری (انگلیسی):');
-        if (!username) return;
-        const password = prompt('رمز عبور (حداقل ۱۲ نویسه):');
-        if (!password || password.length < 12) { toast('رمز باید حداقل ۱۲ نویسه باشد', true); return; }
-        const role = prompt('نقش (EMPLOYEE/CEO/ADMIN):', 'EMPLOYEE');
-        api('/users', {method:'POST', body: JSON.stringify({name, username, password, role, company_ids:[]})})
-          .then(() => { toast('کاربر ایجاد شد'); renderUserManagement(); })
-          .catch(e => toast(e.message, true));
-      };
-      window.__editUser = (id, name, role, active) => {
-        const newName = prompt('نام جدید:', name);
-        if (newName === null) return;
-        const newRole = prompt('نقش جدید (EMPLOYEE/CEO/ADMIN):', role);
-        if (newRole === null) return;
-        const resetPass = confirm('رمز عبور را تغییر دهید؟');
-        let body = {name: newName || name, role: newRole || role};
-        if (resetPass) {
-          const pass = prompt('رمز جدید (حداقل ۱۲ نویسه):');
-          if (pass && pass.length >= 12) body.password = pass;
-        }
-        api(`/users/${id}`, {method:'PATCH', body: JSON.stringify(body)})
-          .then(() => { toast('کاربر ویرایش شد'); renderUserManagement(); })
-          .catch(e => toast(e.message, true));
-      };
-      window.__deactivateUser = (id, name) => {
-        if (!confirm(`غیرفعال کردن «${name}»؟ تمام نشست‌های فعال حذف می‌شوند.`)) return;
-        api(`/users/${id}`, {method:'DELETE'})
-          .then(() => { toast('کاربر غیرفعال شد'); renderUserManagement(); })
-          .catch(e => toast(e.message, true));
-      };
-      window.__activateUser = (id) => {
-        api(`/users/${id}`, {method:'PATCH', body: JSON.stringify({active: true})})
-          .then(() => { toast('کاربر فعال شد'); renderUserManagement(); })
-          .catch(e => toast(e.message, true));
-      };
-      window.__manageAccess = async (userId, userName) => {
-        try {
-          const [detail, companies] = await Promise.all([
-            api(`/users/${userId}`),
-            api('/companies'),
-          ]);
-          const accessIds = new Set((detail.companies||[]).map(c => c.id));
-          const available = (companies||[]).filter(c => !accessIds.has(c.id));
-          let html = `<div style="margin-bottom:16px;"><h3>دسترسی «${esc(userName)}» به شرکت‌ها</h3>`;
-          if ((detail.companies||[]).length > 0) {
-            html += `<div style="margin-top:12px;"><strong>دسترسی فعلی:</strong><div style="margin-top:8px;">${detail.companies.map(c => `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px;background:rgba(11,143,137,0.05);border-radius:8px;margin-bottom:4px;"><span>${esc(c.name)} (${esc(c.code)})</span><button class="btn small" style="background:#fee2e2;color:#991b1b;" onclick="window.__revokeAccess('${userId}','${c.id}')">حذف</button></div>`).join('')}</div></div>`;
-          } else {
-            html += `<p class="hint" style="margin-top:8px;">هیچ دسترسی فعلی وجود ندارد.</p>`;
-          }
-          if (available.length > 0) {
-            html += `<div style="margin-top:16px;"><strong>افزودن دسترسی جدید:</strong><div style="display:flex;gap:8px;margin-top:8px;align-items:center;"><select id="accessSelect" class="field" style="flex:1;">${available.map(c => `<option value="${c.id}">${esc(c.name)} (${esc(c.code)})</option>`).join('')}</select><button class="btn primary small" onclick="window.__grantAccess('${userId}')">افزودن</button></div></div>`;
-          } else if ((detail.companies||[]).length > 0) {
-            html += `<p class="hint" style="margin-top:12px;">تمام شرکت‌ها در دسترسی این کاربر هستند.</p>`;
-          } else {
-            html += `<p class="hint" style="margin-top:12px;">هیچ شرکت فعالی برای اختصاص وجود ندارد.</p>`;
-          }
-          html += `</div>`;
-          modal('مدیریت دسترسی', '', html);
-        } catch(e) { toast(e.message, true); }
-      };
-      window.__grantAccess = (userId) => {
-        const select = document.getElementById('accessSelect');
-        if (!select || !select.value) return;
-        api(`/users/${userId}/company-access`, {method:'POST', body: JSON.stringify({company_ids: [select.value]})})
-          .then(r => { toast(`${r.added} دسترسی اضافه شد`); window.__manageAccess(userId, ''); })
-          .catch(e => toast(e.message, true));
-      };
-      window.__revokeAccess = (userId, companyId) => {
-        api(`/users/${userId}/company-access/${companyId}`, {method:'DELETE'})
-          .then(() => { toast('دسترسی حذف شد'); window.__manageAccess(userId, ''); })
-          .catch(e => toast(e.message, true));
-      };
-    } catch(e) { section.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
+    try { return await renderUsersRich(section); }
+    catch(e) { section.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
   }
-
   // Hook into existing users nav
   const origUsersNav = document.querySelector('[data-view="users"]');
   if (origUsersNav) {
@@ -413,68 +308,9 @@
   async function renderCompanyManagement() {
     const section = document.getElementById('view-companies');
     if (!section) return;
-    try {
-      const companies = await api('/companies');
-      section.innerHTML = `
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-          <h1>شرکت‌ها</h1>
-          <button class="btn primary small" onclick="window.__addCompany()">＋ شرکت جدید</button>
-        </div>
-        <div class="table-card">
-          <table class="data-table">
-            <thead><tr><th>کد</th><th>نام</th><th>وضعیت</th><th>کارمندان</th><th>عملیات</th></tr></thead>
-            <tbody>
-              ${(companies||[]).map(c => `
-                <tr>
-                  <td class="font-mono"><strong>${esc(c.code)}</strong></td>
-                  <td>${esc(c.name)}</td>
-                  <td>${c.active?'<span style="color:#10b981;">✓ فعال</span>':'<span style="color:#ef4444;">✗ غیرفعال</span>'}</td>
-                  <td><button class="btn soft small" onclick="window.__companyEmployees('${c.id}','${esc(c.name)}')">مشاهده</button></td>
-                  <td style="display:flex;gap:4px;">
-                    <button class="btn soft small" onclick="window.__editCompany('${c.id}','${esc(c.name)}','${esc(c.code)}')">✎ ویرایش</button>
-                    ${c.active?`<button class="btn small" style="background:#fee2e2;color:#991b1b;" onclick="window.__deactivateCompany('${c.id}','${esc(c.name)}')">✗ غیرفعال</button>`:''}
-                  </td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        </div>
-      `;
-      window.__addCompany = () => {
-        const code = prompt('کد شرکت:');
-        if (!code) return;
-        const name = prompt('نام شرکت:');
-        if (!name) return;
-        api('/companies', {method:'POST', body: JSON.stringify({code, name})})
-          .then(() => { toast('شرکت ایجاد شد'); renderCompanyManagement(); })
-          .catch(e => toast(e.message, true));
-      };
-      window.__editCompany = (id, name, code) => {
-        const newName = prompt('نام جدید:', name);
-        if (newName === null) return;
-        const newCode = prompt('کد جدید:', code);
-        if (newCode === null) return;
-        api(`/companies/${id}`, {method:'PATCH', body: JSON.stringify({name: newName || name, code: newCode || code})})
-          .then(() => { toast('شرکت ویرایش شد'); renderCompanyManagement(); })
-          .catch(e => toast(e.message, true));
-      };
-      window.__deactivateCompany = (id, name) => {
-        if (!confirm(`غیرفعال کردن «${name}»؟`)) return;
-        api(`/companies/${id}`, {method:'DELETE'})
-          .then(() => { toast('شرکت غیرفعال شد'); renderCompanyManagement(); })
-          .catch(e => toast(e.message, true));
-      };
-      window.__companyEmployees = async (companyId, companyName) => {
-        try {
-          const employees = await api(`/companies/${companyId}/employees`);
-          modal(`کارمندان ${esc(companyName)}`, '', employees.length > 0 ?
-            `<div class="table-card"><table class="data-table"><thead><tr><th>نام</th><th>نام کاربری</th><th>نقش</th><th>وضعیت</th></tr></thead><tbody>${employees.map(e => `<tr><td>${esc(e.name)}</td><td>${esc(e.username)}</td><td>${roleLabels[e.role]||e.role}</td><td>${e.active?'فعال':'غیرفعال'}</td></tr>`).join('')}</tbody></table></div>` :
-            '<p class="hint">هیچ کارمندی به این شرکت اختصاص ندارد.</p>');
-        } catch(e) { toast(e.message, true); }
-      };
-    } catch(e) { section.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
+    try { return await renderCompaniesRich(section); }
+    catch(e) { section.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
   }
-
   const roleLabels = {ADMIN:'مدیر سامانه',CEO:'مدیرعامل',EMPLOYEE:'کارمند'};
 
   // Hook into existing companies nav
@@ -823,13 +659,16 @@
   //  Score/delegate/history buttons can be added to that view in future if needed.)
 
   // ============ SETTINGS VIEW ============
-  let settingsTab = 'task-types';
+  let settingsTab = 'companies2';
   async function renderSettings() {
     const section = document.getElementById('view-settings');
     if (!section) return;
     try {
       const data = await api('/settings');
       const tabs = [
+        {key:'companies2', label:'تعریف شرکت', icon:'🏢'},
+        {key:'users2', label:'کاربران', icon:'👤'},
+        {key:'perms', label:'نقش‌ها و دسترسی‌ها', icon:'🔐'},
         {key:'kpis', label:'شاخص‌های کلیدی (KPI)', icon:'🎯'},
         {key:'task_types', label:'انواع تسک', icon:'📋'},
         {key:'process_types', label:'انواع فرآیند', icon:'🔄'},
@@ -838,14 +677,20 @@
       ];
       section.innerHTML = `
         <h1>تنظیمات</h1>
-        <p class="hint" style="margin-bottom:16px;">مدیریت شاخص‌های کلیدی عملکرد، انواع تسک، فرآیند، نقش و عملکرد — افزودن، ویرایش و حذف</p>
-        <div class="tabs" style="margin-bottom:16px;">
+        <p class="hint" style="margin-bottom:16px;">تعریف شرکت (حقیقی/حقوقی)، مدیریت کاربران و شرکت‌های واگذارشده، نقش‌ها و دسترسی‌های ریزفیلد، شاخص‌ها و انواع</p>
+        <div class="tabs" style="margin-bottom:16px;flex-wrap:wrap;">
           ${tabs.map(t => `<button class="tab ${settingsTab===t.key?'active':''}" onclick="window.__setSettingsTab('${t.key}')">${t.icon} ${t.label}</button>`).join('')}
         </div>
         <div id="settingsContent"></div>
       `;
       window.__setSettingsTab = (key) => { settingsTab = key; renderSettings(); };
-      if (settingsTab === 'kpis') {
+      if (settingsTab === 'companies2') {
+        await renderCompaniesRich(document.getElementById('settingsContent'));
+      } else if (settingsTab === 'users2') {
+        await renderUsersRich(document.getElementById('settingsContent'));
+      } else if (settingsTab === 'perms') {
+        await renderPermsRich(document.getElementById('settingsContent'));
+      } else if (settingsTab === 'kpis') {
         renderKPITab(data);
       } else {
         renderSettingsTab(data, tabs);
@@ -1164,3 +1009,414 @@
         .catch(e=>toast(e.message,true));
     };
   }
+
+// ==================================================================
+// ============ SETTINGS PRO v2 — تعریف شرکت / کاربران / دسترسی‌ها ====
+// (Global scope — uses app.js globals: esc, api, toast, modal, state)
+// ==================================================================
+
+const KIND_LABELS = { LEGAL: 'حقوقی', REAL: 'حقیقی' };
+
+function __field(label, name, value, opts = {}) {
+  const type = opts.type || 'text';
+  const req = opts.required ? 'required' : '';
+  const ph = opts.placeholder ? `placeholder="${esc(opts.placeholder)}"` : '';
+  return `<label style="display:flex;flex-direction:column;gap:4px;font-size:13px;font-weight:600;color:#334155;">${label}
+    <input class="field" name="${name}" type="${type}" value="${esc(value ?? '')}" ${req} ${ph}
+      style="width:100%;padding:8px 12px;border:1px solid #cbd5e1;border-radius:8px;font-weight:400;"></label>`;
+}
+
+function __permCan(key) {
+  return !state.me || !state.me.permissions || state.me.permissions[key] !== false;
+}
+
+// ---------------- تعریف شرکت (rich) ----------------
+async function renderCompaniesRich(container) {
+  if (!container) return;
+  const canManage = __permCan('companies.manage');
+  const companies = await api('/companies');
+  const rows = companies.map(c => `
+    <tr>
+      <td class="font-mono"><strong>${esc(c.code)}</strong></td>
+      <td><span class="pill" style="background:${c.kind === 'REAL' ? '#fef3c7;color:#92400e' : '#e0f2fe;color:#0c4a6e'};padding:2px 10px;border-radius:999px;font-size:11px;">${KIND_LABELS[c.kind] || 'حقوقی'}</span></td>
+      <td><strong>${esc(c.name)}</strong>${c.kind === 'REAL' && (c.first_name || c.last_name) ? `<div style="font-size:11px;color:#64748b;">${esc(c.first_name)} ${esc(c.last_name)}</div>` : ''}</td>
+      <td class="font-mono" style="font-size:12px;">${esc(c.national_id) || '—'}</td>
+      <td style="font-size:12px;">${esc(c.phone) || '—'}</td>
+      <td style="font-size:12px;">${esc(c.manager_name) || '—'}${c.manager_phone ? `<div style="font-size:11px;color:#64748b;">${esc(c.manager_phone)}</div>` : ''}</td>
+      <td>${c.active ? '<span style="color:#10b981;">✓ فعال</span>' : '<span style="color:#ef4444;">✗ غیرفعال</span>'}</td>
+      <td style="display:flex;gap:4px;flex-wrap:wrap;">
+        ${canManage ? `<button class="btn soft small" onclick="window.__companyForm('${c.id}')">✎ ویرایش</button>` : ''}
+        ${canManage ? (c.active
+          ? `<button class="btn small" style="background:#fee2e2;color:#991b1b;" onclick="window.__toggleCompany('${c.id}',false)">✗ غیرفعال</button>`
+          : `<button class="btn small" style="background:#d1fae5;color:#065f46;" onclick="window.__toggleCompany('${c.id}',true)">✓ فعال</button>`) : ''}
+        <button class="btn small" style="background:#e0f2fe;color:#0369a1;" onclick="window.__companyDetails('${c.id}')">👁 جزئیات</button>
+      </td>
+    </tr>`).join('');
+  container.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+      <h3 style="margin:0;">🏢 تعریف شرکت (${companies.length})</h3>
+      ${canManage ? '<button class="btn primary small" onclick="window.__companyForm()">＋ شرکت جدید</button>' : ''}
+    </div>
+    <p class="hint" style="margin-bottom:12px;color:#64748b;font-size:13px;">مشخصات کامل شرکت‌های حقیقی و حقوقی دفتر — شماره ملی، تماس، آدرس، کد پستی و اطلاعات مدیر. نوع شرکت (حقیقی/حقوقی) هنگام ثبت انتخاب می‌شود.</p>
+    <div class="table-card" style="overflow-x:auto;">
+      <table class="data-table">
+        <thead><tr><th>کد</th><th>نوع</th><th>نام</th><th>شماره ملی</th><th>تماس</th><th>مدیر</th><th>وضعیت</th><th>عملیات</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="8" style="text-align:center;padding:20px;color:#64748b;">شرکتی ثبت نشده است</td></tr>'}</tbody>
+      </table>
+    </div>`;
+  window.__toggleCompany = async (id, active) => {
+    try {
+      await api(`/companies/${id}`, { method: 'PATCH', body: JSON.stringify({ active }) });
+      toast(active ? 'شرکت فعال شد' : 'شرکت غیرفعال شد');
+      renderCompaniesRich(container);
+    } catch (e) { toast(e.message, true); }
+  };
+  window.__companyDetails = async (id) => {
+    try {
+      const c = (await api('/companies')).find(x => x.id === id);
+      if (!c) return toast('شرکت پیدا نشد', true);
+      const item = (label, val) => `<div style="display:flex;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #f1f5f9;font-size:13px;"><span style="color:#64748b;">${label}</span><b>${esc(val) || '—'}</b></div>`;
+      const body = `<div style="border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;">
+        ${item('نوع', KIND_LABELS[c.kind] || 'حقوقی')}${item('نام', c.name)}${item('کد', c.code)}
+        ${c.kind === 'REAL' ? item('نام', c.first_name) + item('نام خانوادگی', c.last_name) : ''}
+        ${item('شماره ملی', c.national_id)}${item('تماس', c.phone)}${item('آدرس', c.address)}
+        ${item('کد پستی', c.postal_code)}${item('نام مدیر', c.manager_name)}${item('تماس مدیر', c.manager_phone)}
+      </div>`;
+      modal(`جزئیات ${c.name}`, 'مشخصات کامل شرکت', body);
+    } catch (e) { toast(e.message, true); }
+  };
+}
+
+function __companyForm(id) {
+  (async () => {
+    let c = null;
+    if (id) c = (await api('/companies')).find(x => x.id === id);
+    const v = (f) => esc(c?.[f] ?? '');
+    const kind = c?.kind || 'LEGAL';
+    const body = `
+    <form id="companyForm2" style="display:grid;gap:12px;">
+      <div style="display:flex;gap:8px;">
+        <label class="check-row" style="flex:1;padding:10px;border:2px solid ${kind === 'LEGAL' ? '#0b8f89' : '#cbd5e1'};border-radius:10px;cursor:pointer;">
+          <input type="radio" name="kind" value="LEGAL" ${kind === 'LEGAL' ? 'checked' : ''}> 🏢 شخص حقوقی (شرکت)</label>
+        <label class="check-row" style="flex:1;padding:10px;border:2px solid ${kind === 'REAL' ? '#0b8f89' : '#cbd5e1'};border-radius:10px;cursor:pointer;">
+          <input type="radio" name="kind" value="REAL" ${kind === 'REAL' ? 'checked' : ''}> 👤 شخص حقیقی</label>
+      </div>
+      <div id="legalNameRow" style="display:grid;gap:12px;">
+        ${__field('نام شرکت *', 'name', c?.name, { required: true, placeholder: 'مثلاً: شرکت بازرگانی پارس' })}
+      </div>
+      <div id="realNameRow" class="form-grid" style="display:none;">
+        ${__field('نام *', 'first_name', c?.first_name, { required: true })}
+        ${__field('نام خانوادگی *', 'last_name', c?.last_name, { required: true })}
+      </div>
+      <div class="form-grid">
+        ${__field('کد شرکت *', 'code', c?.code, { required: true, placeholder: 'کد یکتا — مثلاً 1001' })}
+        ${__field('شماره ملی / شناسه ملی', 'national_id', c?.national_id, { placeholder: '۱۱ رقمی برای حقوقی / ۱۰ رقمی برای حقیقی' })}
+      </div>
+      <div class="form-grid">
+        ${__field('تماس', 'phone', c?.phone, { placeholder: '021-12345678' })}
+        ${__field('کد پستی', 'postal_code', c?.postal_code, { placeholder: '۱۰ رقمی' })}
+      </div>
+      ${__field('آدرس', 'address', c?.address, { placeholder: 'آدرس کامل دفتر/شرکت' })}
+      <div class="form-grid">
+        ${__field('نام مدیر', 'manager_name', c?.manager_name)}
+        ${__field('تماس مدیر', 'manager_phone', c?.manager_phone)}
+      </div>
+      <button class="btn primary">${id ? 'ذخیره تغییرات' : 'ثبت شرکت'}</button>
+    </form>`;
+    modal(id ? '✎ ویرایش شرکت' : '＋ تعریف شرکت جدید', 'نوع شخص (حقیقی/حقوقی) فیلدهای نام را تعیین می‌کند.', body);
+    const form = document.getElementById('companyForm2');
+    const syncKind = () => {
+      const k = form.querySelector('[name=kind]:checked')?.value;
+      document.getElementById('legalNameRow').style.display = k === 'LEGAL' ? 'grid' : 'none';
+      document.getElementById('realNameRow').style.display = k === 'REAL' ? 'grid' : 'none';
+    };
+    form.querySelectorAll('[name=kind]').forEach(r => r.addEventListener('change', syncKind));
+    syncKind();
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const payload = Object.fromEntries(fd.entries());
+      if (payload.kind === 'REAL' && !payload.name) {
+        payload.name = `${payload.first_name || ''} ${payload.last_name || ''}`.trim();
+      }
+      try {
+        if (id) await api(`/companies/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+        else await api('/companies', { method: 'POST', body: JSON.stringify(payload) });
+        document.getElementById('modalRoot').innerHTML = '';
+        toast(id ? 'شرکت ویرایش شد' : 'شرکت ثبت شد');
+        renderCompaniesRich(document.getElementById('settingsContent') || document.getElementById('view-companies'));
+      } catch (err) { toast(err.message, true); }
+    });
+  })();
+}
+window.__companyForm = __companyForm;
+
+// ---------------- کاربران (rich) ----------------
+const ROLE_LABELS2 = { ADMIN: 'مدیر سامانه', CEO: 'مدیرعامل', EMPLOYEE: 'کارمند' };
+
+async function renderUsersRich(container) {
+  if (!container) return;
+  const canManage = __permCan('users.manage');
+  const [users, companies] = await Promise.all([api('/users'), api('/companies')]);
+  const accessMap = {};
+  await Promise.all(users.map(async u => {
+    try {
+      const d = await api(`/users/${u.id}`);
+      accessMap[u.id] = (d.companies || []).map(c => c.name);
+    } catch { accessMap[u.id] = []; }
+  }));
+  const rows = users.map(u => `
+    <tr>
+      <td><strong>${esc(u.name)}</strong>${(u.first_name || u.last_name) ? `<div style="font-size:11px;color:#64748b;">${esc(u.first_name)} ${esc(u.last_name)}</div>` : ''}</td>
+      <td class="font-mono">${esc(u.username)}</td>
+      <td style="font-size:12px;">${esc(u.phone) || '—'}</td>
+      <td><span class="tag">${ROLE_LABELS2[u.role] || u.role}</span></td>
+      <td style="max-width:220px;font-size:12px;">${accessMap[u.id]?.length
+        ? `<span class="pill" style="background:#0b8f89;color:#fff;padding:2px 10px;border-radius:999px;font-size:11px;">${accessMap[u.id].length} شرکت</span> <span style="color:#64748b;">${esc(accessMap[u.id].slice(0, 3).join('، '))}${accessMap[u.id].length > 3 ? ' …' : ''}</span>`
+        : '<span style="color:#ef4444;font-size:12px;">بدون دسترسی</span>'}</td>
+      <td>${u.active ? '<span style="color:#10b981;">✓ فعال</span>' : '<span style="color:#ef4444;">✗ غیرفعال</span>'}</td>
+      <td style="display:flex;gap:4px;flex-wrap:wrap;">
+        ${canManage ? `<button class="btn soft small" onclick="window.__userForm('${u.id}')">✎ ویرایش</button>` : ''}
+        ${__permCan('users.permissions') ? `<button class="btn small" style="background:#ede9fe;color:#5b21b6;" onclick="window.__openPerms('${u.id}')">🔐 دسترسی‌ها</button>` : ''}
+        ${canManage ? (u.active
+          ? `<button class="btn small" style="background:#fee2e2;color:#991b1b;" onclick="window.__toggleUser('${u.id}',false)">✗ غیرفعال</button>`
+          : `<button class="btn small" style="background:#d1fae5;color:#065f46;" onclick="window.__toggleUser('${u.id}',true)">✓ فعال</button>`) : ''}
+      </td>
+    </tr>`).join('');
+  container.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+      <h3 style="margin:0;">👤 کاربران (${users.length})</h3>
+      ${canManage ? '<button class="btn primary small" onclick="window.__userForm()">＋ کاربر جدید</button>' : ''}
+    </div>
+    <p class="hint" style="margin-bottom:12px;color:#64748b;font-size:13px;">برای هر کارمند حساب مستقل بسازید و شرکت‌های واگذارشده را مشخص کنید — کاربر فقط اطلاعات همان شرکت‌ها را می‌بیند. دسترسی ریزفیلد در تب «نقش‌ها و دسترسی‌ها».</p>
+    <div class="table-card" style="overflow-x:auto;">
+      <table class="data-table">
+        <thead><tr><th>نام و نام خانوادگی</th><th>نام کاربری</th><th>تماس</th><th>نقش</th><th>شرکت‌های واگذارشده</th><th>وضعیت</th><th>عملیات</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="7" style="text-align:center;padding:20px;color:#64748b;">کاربری ثبت نشده است</td></tr>'}</tbody>
+      </table>
+    </div>`;
+  window.__toggleUser = async (id, active) => {
+    try {
+      if (!active && !confirm('غیرفعال کردن کاربر؟ تمام نشست‌های فعال او حذف می‌شود.')) return;
+      await api(`/users/${id}`, { method: active ? 'PATCH' : 'DELETE', body: active ? JSON.stringify({ active: true }) : undefined });
+      toast(active ? 'کاربر فعال شد' : 'کاربر غیرفعال شد');
+      renderUsersRich(container);
+    } catch (e) { toast(e.message, true); }
+  };
+}
+
+async function __userForm(id) {
+  let u = null;
+  if (id) u = await api(`/users/${id}`);
+  const companies = await api('/companies');
+  const accessIds = new Set((u?.companies || []).map(c => c.id));
+  const companyChecks = companies.map(c => `
+    <label class="check-row" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:4px;cursor:pointer;font-size:13px;font-weight:400;">
+      <input type="checkbox" name="company_ids" value="${esc(c.id)}" ${accessIds.has(c.id) ? 'checked' : ''}>
+      <span>${esc(c.name)} <small style="color:#64748b;">(${esc(c.code)})</small></span></label>`).join('');
+  const body = `
+  <form id="userForm2" style="display:grid;gap:12px;">
+    <div class="form-grid">
+      ${__field('نام *', 'first_name', u?.first_name, { required: true })}
+      ${__field('نام خانوادگی *', 'last_name', u?.last_name, { required: true })}
+    </div>
+    <div class="form-grid">
+      ${__field('نام کاربری *', 'username', u?.username, { required: true, placeholder: 'حروف انگلیسی، عدد و . _ -' })}
+      ${__field('تماس', 'phone', u?.phone, { placeholder: '09121234567' })}
+    </div>
+    ${id ? `
+    <div class="form-grid">
+      ${__field('رمز عبور جدید (اختیاری)', 'password', '', { type: 'password', placeholder: 'حداقل ۱۲ نویسه' })}
+      ${__field('تایید رمز عبور', 'password2', '', { type: 'password' })}
+    </div>` : `
+    <div class="form-grid">
+      ${__field('رمز عبور *', 'password', '', { type: 'password', required: true, placeholder: 'حداقل ۱۲ نویسه' })}
+      ${__field('تایید رمز *', 'password2', '', { type: 'password', required: true })}
+    </div>`}
+    <label style="display:flex;flex-direction:column;gap:4px;font-size:13px;font-weight:600;color:#334155;">نقش
+      <select name="role" class="field" style="padding:8px 12px;border:1px solid #cbd5e1;border-radius:8px;font-weight:400;">
+        <option value="EMPLOYEE" ${!u || u.role === 'EMPLOYEE' ? 'selected' : ''}>کارمند</option>
+        <option value="CEO" ${u?.role === 'CEO' ? 'selected' : ''}>مدیرعامل</option>
+        <option value="ADMIN" ${u?.role === 'ADMIN' ? 'selected' : ''}>مدیر سامانه</option>
+      </select></label>
+    <div>
+      <p class="section-title" style="margin-bottom:6px;">شرکت‌های واگذارشده</p>
+      <p class="hint" style="margin-bottom:8px;font-size:12px;">⚠ هر کاربر فقط اطلاعات (تسک‌ها، اسناد، عملکرد) شرکت‌های انتخاب‌شده را می‌بیند.</p>
+      <div style="max-height:180px;overflow-y:auto;">${companyChecks || '<span class="hint">ابتدا از تب «تعریف شرکت» شرکت بسازید.</span>'}</div>
+    </div>
+    <button class="btn primary">${id ? 'ذخیره تغییرات' : 'ایجاد کاربر'}</button>
+  </form>`;
+  modal(id ? '✎ ویرایش کاربر' : '＋ کاربر جدید', 'رمز حداقل ۱۲ نویسه. نام کاربری یکتا باشد.', body);
+  document.getElementById('userForm2').addEventListener('submit', async e => {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+    const payload = Object.fromEntries(fd.entries());
+    payload.company_ids = fd.getAll('company_ids');
+    if (!payload.password) { delete payload.password; delete payload.password2; }
+    if (payload.password && payload.password !== payload.password2) return toast('رمز عبور و تکرار آن یکسان نیستند', true);
+    try {
+      if (id) await api(`/users/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+      else await api('/users', { method: 'POST', body: JSON.stringify(payload) });
+      document.getElementById('modalRoot').innerHTML = '';
+      toast(id ? 'کاربر ویرایش شد' : 'کاربر ایجاد شد');
+      renderUsersRich(document.getElementById('settingsContent') || document.getElementById('view-users'));
+    } catch (err) { toast(err.message, true); }
+  });
+}
+window.__userForm = __userForm;
+
+// ---------------- نقش‌ها و دسترسی‌ها (ماتریس ریزفیلد) ----------------
+let __permsSelectedUser = null;
+
+async function renderPermsRich(container) {
+  if (!container) return;
+  const users = await api('/users');
+  if (!users.length) { container.innerHTML = '<div class="alert error">کاربری وجود ندارد.</div>'; return; }
+  if (!__permsSelectedUser || !users.find(u => u.id === __permsSelectedUser)) __permsSelectedUser = users[0].id;
+  container.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+      <h3 style="margin:0;">🔐 نقش‌ها و دسترسی‌ها</h3>
+      <span class="pill" style="background:#ede9fe;color:#5b21b6;padding:4px 12px;border-radius:999px;font-size:12px;">دسترسی ریزفیلد + محدودیت شرکت</span>
+    </div>
+    <p class="hint" style="margin-bottom:12px;color:#64748b;font-size:13px;">
+      💡 هر کاربر علاوه بر نقش پایه، دسترسی‌های ریز جداگانه دارد. تیک هر مورد یعنی کاربر به آن بخش دسترسی دارد.
+      در بخش «شرکت‌های قابل مشاهده» مشخص می‌شود هر کاربر اطلاعات کدام شرکت‌ها را می‌بیند.
+      تغییر دسترسی، نشست کاربر را فوراً به‌روزرسانی می‌کند.</p>
+    <div style="display:grid;grid-template-columns:220px 1fr;gap:16px;align-items:start;" id="permsLayout">
+      <div class="table-card" style="padding:8px;">
+        <p class="section-title" style="padding:4px 8px;">کاربران</p>
+        ${users.map(u => `
+          <button class="perms-user ${u.id === __permsSelectedUser ? 'active' : ''}" data-user="${esc(u.id)}"
+            style="display:flex;flex-direction:column;align-items:flex-start;width:100%;padding:10px;border:none;border-radius:8px;background:${u.id === __permsSelectedUser ? '#0b8f89' : 'transparent'};color:${u.id === __permsSelectedUser ? '#fff' : 'inherit'};cursor:pointer;text-align:right;margin-bottom:2px;">
+            <b style="font-size:13px;">${esc(u.name)}</b>
+            <small style="opacity:.8;">${ROLE_LABELS2[u.role] || u.role} · ${esc(u.username)}</small>
+          </button>`).join('')}
+      </div>
+      <div id="permsMatrix"><p class="hint">در حال بارگذاری…</p></div>
+    </div>`;
+  container.querySelectorAll('.perms-user').forEach(btn => {
+    btn.addEventListener('click', () => { __permsSelectedUser = btn.dataset.user; renderPermsRich(container); });
+  });
+  await __renderPermsMatrix(document.getElementById('permsMatrix'), __permsSelectedUser);
+}
+
+async function __renderPermsMatrix(el, userId) {
+  try {
+    const [permData, companies] = await Promise.all([
+      api(`/users/${userId}/permissions`),
+      api('/companies'),
+    ]);
+    const u = permData.user;
+    const effective = permData.effective || {};
+    const accessIds = new Set((permData.companies || []).map(c => c.id));
+    const canEdit = __permCan('users.permissions');
+    const groups = (await api('/permissions/catalog')).catalog;
+    let idx = 0;
+    const groupsHtml = groups.map(g => `
+      <div style="border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;margin-bottom:10px;">
+        <p class="section-title" style="margin-bottom:8px;">${esc(g.group)}</p>
+        ${g.items.map(it => { idx++; const on = !!effective[it.key];
+          return `<label style="display:flex;align-items:center;gap:10px;padding:6px 4px;cursor:${canEdit ? 'pointer' : 'default'};font-size:13px;font-weight:400;border-radius:6px;">
+            <input type="checkbox" class="perm-check" data-key="${esc(it.key)}" ${on ? 'checked' : ''} ${canEdit ? '' : 'disabled'}
+              style="width:16px;height:16px;accent-color:#0b8f89;">
+            <span>${esc(it.label)}</span>
+            ${permData.override && it.key in permData.override ? '<span class="pill" style="background:#fef3c7;color:#92400e;padding:1px 8px;border-radius:999px;font-size:10px;">سفارشی</span>' : ''}
+          </label>`; }).join('')}
+      </div>`).join('');
+    const companiesHtml = companies.map(c => `
+      <label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid ${accessIds.has(c.id) ? '#0b8f89' : '#e2e8f0'};border-radius:8px;margin-bottom:4px;cursor:${canEdit ? 'pointer' : 'default'};font-size:13px;font-weight:400;background:${accessIds.has(c.id) ? 'rgba(11,143,137,.06)' : 'transparent'};">
+        <input type="checkbox" class="company-vis-check" data-company="${esc(c.id)}" ${accessIds.has(c.id) ? 'checked' : ''} ${canEdit ? '' : 'disabled'} style="accent-color:#0b8f89;">
+        <span>${esc(c.name)} <small style="color:#64748b;">(${esc(c.code)}) · ${KIND_LABELS[c.kind] || 'حقوقی'}</small></span></label>`).join('');
+    el.innerHTML = `
+      <div class="table-card" style="padding:14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+        <div><b style="font-size:15px;">${esc(u.name)}</b> <span class="tag">${ROLE_LABELS2[u.role] || u.role}</span>
+          <div style="font-size:12px;color:#64748b;margin-top:2px;">نام کاربری: ${esc(u.username)} · ${u.active ? 'فعال' : 'غیرفعال'}</div></div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          ${canEdit ? `
+            <button class="btn primary small" id="permsSave">💾 ذخیره دسترسی‌ها</button>
+            <button class="btn soft small" id="permsReset">↺ بازگشت به پیش‌فرض نقش</button>` : ''}
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start;" class="perms-two-col">
+        <div>
+          <p class="section-title">دسترسی‌های ریز (به ریز فیلد)</p>
+          ${groupsHtml}
+        </div>
+        <div>
+          <p class="section-title">شرکت‌های قابل مشاهده</p>
+          <div class="alert" style="background:#fffbeb;border:1px solid #fde68a;color:#92400e;font-size:12px;margin-bottom:10px;">
+            ⚠ این لیست تعیین می‌کند کاربر اطلاعات چه شرکت‌هایی را ببیند: تسک‌ها، اسناد، عملکرد و مرجع‌ها فقط برای شرکت‌های تیک‌خورده نمایش داده می‌شود.
+          </div>
+          ${companiesHtml || '<p class="hint">شرکتی ثبت نشده است.</p>'}
+          <div class="alert" style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af;font-size:12px;margin-top:10px;">
+            ℹ مدیرعامل و مدیر سامانه به‌صورت پیش‌فرض همه شرکت‌ها را می‌بینند. محدود کردن فهرست بالا روی کارکنان اثر مستقیم دارد.
+          </div>
+        </div>
+      </div>`;
+    if (canEdit) {
+      document.getElementById('permsSave').addEventListener('click', async () => {
+        const perms = {};
+        el.querySelectorAll('.perm-check').forEach(cb => perms[cb.dataset.key] = cb.checked);
+        const companyIds = [...el.querySelectorAll('.company-vis-check:checked')].map(cb => cb.dataset.company);
+        try {
+          await api(`/users/${userId}/permissions`, { method: 'PUT', body: JSON.stringify({ permissions: perms }) });
+          await api(`/users/${userId}`, { method: 'PATCH', body: JSON.stringify({ company_ids: companyIds }) });
+          toast('دسترسی‌ها ذخیره و اعمال شد');
+          __renderPermsMatrix(el, userId);
+        } catch (e) { toast(e.message, true); }
+      });
+      document.getElementById('permsReset').addEventListener('click', async () => {
+        if (!confirm('بازگشت دسترسی‌ها به پیش‌فرض نقش؟')) return;
+        try {
+          await api(`/users/${userId}/permissions`, { method: 'PUT', body: JSON.stringify({ permissions: null }) });
+          toast('دسترسی‌ها به پیش‌فرض نقش بازگشت');
+          __renderPermsMatrix(el, userId);
+        } catch (e) { toast(e.message, true); }
+      });
+    }
+  } catch (e) { el.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
+}
+
+window.__openPerms = (userId) => {
+  __permsSelectedUser = userId;
+  // اگر در تب تنظیمات هستیم، به تب دسترسی‌ها برو؛ وگرنه مودال ساده
+  const settingsContent = document.getElementById('settingsContent');
+  if (settingsContent && document.getElementById('view-settings') && !document.getElementById('view-settings').classList.contains('hidden')) {
+    if (typeof window.__setSettingsTab === 'function') { window.__setSettingsTab('perms'); return; }
+  }
+  modal('🔐 نقش‌ها و دسترسی‌ها', 'مدیریت دسترسی کاربر', '<div id="permsMatrixModal"><p class="hint">در حال بارگذاری…</p></div>', { wide: true });
+  __renderPermsMatrix(document.getElementById('permsMatrixModal'), userId);
+};
+
+// ---------------- nav overrides + permission gating ----------------
+window.renderUsers = function() { return renderUserManagement(); };
+window.renderCompanies = function() { return renderCompanyManagement(); };
+
+const __NAV_PERMS = {
+  audit: 'audit.view',
+  users: 'users.view',
+  companies: 'companies.view',
+  performance: 'reports.kpi',
+  'kpi-report': 'reports.kpi',
+  iso30414: 'reports.iso',
+  automations: 'automations.manage',
+  settings: 'settings.view',
+};
+
+function __applyNavPermGating() {
+  if (!state.me || !state.me.permissions) return false;
+  Object.entries(__NAV_PERMS).forEach(([view, perm]) => {
+    const btn = document.querySelector(`.nav-item[data-view="${view}"]`);
+    if (btn) btn.classList.toggle('hidden', state.me.permissions[perm] === false);
+  });
+  return true;
+}
+window.__applyNavPermGating = __applyNavPermGating;
+
+(function __gatingLoop() {
+  let tries = 0;
+  const t = setInterval(() => {
+    tries++;
+    if (__applyNavPermGating() || tries > 60) clearInterval(t);
+  }, 500);
+})();

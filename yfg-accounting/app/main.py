@@ -54,7 +54,9 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS users(
  id TEXT PRIMARY KEY, name TEXT NOT NULL, username TEXT NOT NULL UNIQUE,
  password_hash TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('ADMIN','EMPLOYEE','CEO')),
- active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL
+ active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL,
+ first_name TEXT NOT NULL DEFAULT '', last_name TEXT NOT NULL DEFAULT '',
+ phone TEXT NOT NULL DEFAULT '', permissions TEXT
 );
 CREATE TABLE IF NOT EXISTS sessions(
  token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id),
@@ -62,7 +64,10 @@ CREATE TABLE IF NOT EXISTS sessions(
 );
 CREATE TABLE IF NOT EXISTS companies(
  id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1,
- created_at TEXT NOT NULL
+ created_at TEXT NOT NULL,
+ kind TEXT NOT NULL DEFAULT 'LEGAL', first_name TEXT NOT NULL DEFAULT '', last_name TEXT NOT NULL DEFAULT '',
+ national_id TEXT NOT NULL DEFAULT '', phone TEXT NOT NULL DEFAULT '', address TEXT NOT NULL DEFAULT '',
+ postal_code TEXT NOT NULL DEFAULT '', manager_name TEXT NOT NULL DEFAULT '', manager_phone TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS company_access(
  user_id TEXT NOT NULL REFERENCES users(id), company_id TEXT NOT NULL REFERENCES companies(id),
@@ -387,6 +392,21 @@ def init_db() -> None:
             ("performance_entries", "due_date", "TEXT"),
             ("performance_entries", "progress", "INTEGER NOT NULL DEFAULT 0"),
             ("performance_entries", "updated_at", "TEXT"),
+            # Settings v2: rich company fields (تعریف شرکت حرفه‌ای)
+            ("companies", "kind", "TEXT NOT NULL DEFAULT 'LEGAL'"),
+            ("companies", "first_name", "TEXT NOT NULL DEFAULT ''"),
+            ("companies", "last_name", "TEXT NOT NULL DEFAULT ''"),
+            ("companies", "national_id", "TEXT NOT NULL DEFAULT ''"),
+            ("companies", "phone", "TEXT NOT NULL DEFAULT ''"),
+            ("companies", "address", "TEXT NOT NULL DEFAULT ''"),
+            ("companies", "postal_code", "TEXT NOT NULL DEFAULT ''"),
+            ("companies", "manager_name", "TEXT NOT NULL DEFAULT ''"),
+            ("companies", "manager_phone", "TEXT NOT NULL DEFAULT ''"),
+            # Settings v2: rich user fields + fine-grained permissions
+            ("users", "first_name", "TEXT NOT NULL DEFAULT ''"),
+            ("users", "last_name", "TEXT NOT NULL DEFAULT ''"),
+            ("users", "phone", "TEXT NOT NULL DEFAULT ''"),
+            ("users", "permissions", "TEXT"),
         ):
             columns = {r["name"] for r in con.execute(f"PRAGMA table_info({table})")}
             if column not in columns:
@@ -480,6 +500,94 @@ def current_user(request: Request, con: sqlite3.Connection | None = None) -> sql
 def require_role(user: sqlite3.Row, *roles: str) -> None:
     if user["role"] not in roles:
         raise HTTPException(403, "دسترسی کافی ندارید")
+
+
+# ===== FINE-GRAINED PERMISSION SYSTEM (نقش‌ها و دسترسی‌ها به ریز فیلد) =====
+# هر کاربر می‌تواند علاوه بر نقش پایه، دسترسی‌های ریز داشته باشد.
+# users.permissions = NULL یعنی پیش‌فرض نقش؛ در غیر این صورت JSON {perm_key: bool}
+
+PERMISSION_CATALOG = [
+    {"group": "داشبورد و گزارش‌ها", "items": [
+        {"key": "dashboard.view", "label": "مشاهده نمای کلی", "roles": ["ADMIN", "CEO", "EMPLOYEE"]},
+        {"key": "reports.kpi", "label": "گزارش عملکرد تیم (KPI)", "roles": ["ADMIN", "CEO"]},
+        {"key": "reports.iso", "label": "گزارش ISO 30414", "roles": ["ADMIN", "CEO"]},
+        {"key": "audit.view", "label": "گزارش ممیزی", "roles": ["ADMIN"]},
+    ]},
+    {"group": "تسک‌ها", "items": [
+        {"key": "tasks.view", "label": "مشاهده تسک‌ها", "roles": ["ADMIN", "CEO", "EMPLOYEE"]},
+        {"key": "tasks.create", "label": "ایجاد و واگذاری تسک", "roles": ["ADMIN", "CEO"]},
+        {"key": "tasks.decide", "label": "تصمیم مدیر روی تسک (تأیید/برگشت)", "roles": ["ADMIN", "CEO"]},
+        {"key": "tasks.reference", "label": "بارگذاری فایل مرجع Excel", "roles": ["ADMIN", "CEO"]},
+    ]},
+    {"group": "شرکت‌ها", "items": [
+        {"key": "companies.view", "label": "مشاهده شرکت‌ها (فقط شرکت‌های واگذارشده)", "roles": ["ADMIN", "CEO", "EMPLOYEE"]},
+        {"key": "companies.manage", "label": "تعریف/ویرایش/حذف شرکت", "roles": ["ADMIN"]},
+    ]},
+    {"group": "کاربران", "items": [
+        {"key": "users.view", "label": "مشاهده فهرست کاربران", "roles": ["ADMIN", "CEO"]},
+        {"key": "users.manage", "label": "ایجاد/ویرایش/غیرفعال‌سازی کاربر", "roles": ["ADMIN"]},
+        {"key": "users.permissions", "label": "تعیین نقش‌ها و دسترسی‌های ریز کاربران", "roles": ["ADMIN"]},
+    ]},
+    {"group": "عملکرد", "items": [
+        {"key": "performance.own", "label": "ثبت عملکرد خود", "roles": ["ADMIN", "CEO", "EMPLOYEE"]},
+        {"key": "performance.review", "label": "بررسی و تصمیم روی عملکرد کارکنان", "roles": ["ADMIN", "CEO"]},
+        {"key": "performance.reference", "label": "بارگذاری مرجع عملکرد", "roles": ["ADMIN", "CEO"]},
+    ]},
+    {"group": "کارکرد و درخواست‌ها", "items": [
+        {"key": "attendance.own", "label": "ثبت ورود/خروج خود", "roles": ["ADMIN", "CEO", "EMPLOYEE"]},
+        {"key": "attendance.all", "label": "مشاهده کارکرد همه کارکنان", "roles": ["ADMIN", "CEO"]},
+        {"key": "requests.view", "label": "مشاهده درخواست‌ها", "roles": ["ADMIN", "CEO", "EMPLOYEE"]},
+        {"key": "requests.decide", "label": "تأیید/رد درخواست‌ها", "roles": ["ADMIN", "CEO"]},
+    ]},
+    {"group": "ابزارها", "items": [
+        {"key": "kanban.view", "label": "برد کانبان", "roles": ["ADMIN", "CEO", "EMPLOYEE"]},
+        {"key": "time.use", "label": "تایم ترکینگ", "roles": ["ADMIN", "CEO", "EMPLOYEE"]},
+        {"key": "chat.use", "label": "گفتگو", "roles": ["ADMIN", "CEO", "EMPLOYEE"]},
+        {"key": "automations.manage", "label": "مدیریت اتوماسیون‌ها", "roles": ["ADMIN", "CEO"]},
+    ]},
+    {"group": "تنظیمات", "items": [
+        {"key": "settings.view", "label": "ورود به تنظیمات", "roles": ["ADMIN", "CEO"]},
+        {"key": "settings.types", "label": "مدیریت انواع تسک/فرآیند/نقش/عملکرد", "roles": ["ADMIN", "CEO"]},
+        {"key": "settings.kpi", "label": "مدیریت شاخص‌های کلیدی (KPI)", "roles": ["ADMIN", "CEO"]},
+        {"key": "settings.companies", "label": "زیربخش تعریف شرکت", "roles": ["ADMIN", "CEO"]},
+        {"key": "settings.users", "label": "زیربخش کاربران", "roles": ["ADMIN", "CEO"]},
+        {"key": "settings.permissions", "label": "زیربخش نقش‌ها و دسترسی‌ها", "roles": ["ADMIN", "CEO"]},
+    ]},
+]
+
+
+def role_default_permissions(role: str) -> dict[str, bool]:
+    return {item["key"]: role in item["roles"] for group in PERMISSION_CATALOG for item in group["items"]}
+
+
+def effective_permissions(user: sqlite3.Row) -> dict[str, bool]:
+    perms = role_default_permissions(user["role"])
+    raw = user["permissions"] if "permissions" in user.keys() else None
+    if raw:
+        try:
+            override = json.loads(raw)
+            if isinstance(override, dict):
+                for key, value in override.items():
+                    if key in perms:
+                        perms[key] = bool(value)
+        except (ValueError, TypeError):
+            pass
+    # محافظت ضد قفل‌شدگی: مدیر فعال همیشه می‌تواند تنظیمات دسترسی را ببیند
+    if user["role"] == "ADMIN":
+        perms["users.view"] = True
+        perms["users.permissions"] = True
+        perms["settings.view"] = True
+        perms["settings.permissions"] = True
+    return perms
+
+
+def has_perm(user: sqlite3.Row, key: str) -> bool:
+    return effective_permissions(user).get(key, False)
+
+
+def require_perm(user: sqlite3.Row, key: str) -> None:
+    if not has_perm(user, key):
+        raise HTTPException(403, "دسترسی لازم برای این عملیات را ندارید")
 
 
 def can_access_company(con: sqlite3.Connection, user: sqlite3.Row, company_id: str) -> bool:
@@ -912,16 +1020,56 @@ class LoginModel(BaseModel):
 
 
 class UserCreate(BaseModel):
-    name: str = Field(min_length=2, max_length=100)
+    name: str | None = Field(default=None, min_length=2, max_length=100)
+    first_name: str = Field(default="", max_length=80)
+    last_name: str = Field(default="", max_length=80)
+    phone: str = Field(default="", max_length=30)
     username: str = Field(min_length=3, max_length=50)
     password: str = Field(min_length=12, max_length=200)
+    password2: str | None = Field(default=None, max_length=200)
     role: str = "EMPLOYEE"
     company_ids: list[str] = []
 
 
+class UserUpdate(BaseModel):
+    name: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    phone: str | None = None
+    role: str | None = None
+    active: bool | None = None
+    password: str | None = None
+    password2: str | None = None
+    company_ids: list[str] | None = None
+
+
 class CompanyCreate(BaseModel):
     code: str = Field(min_length=1, max_length=40)
-    name: str = Field(min_length=2, max_length=120)
+    name: str | None = Field(default=None, min_length=2, max_length=120)
+    kind: str = Field(default="LEGAL", pattern="^(LEGAL|REAL)$")
+    first_name: str = Field(default="", max_length=80)
+    last_name: str = Field(default="", max_length=80)
+    national_id: str = Field(default="", max_length=20)
+    phone: str = Field(default="", max_length=30)
+    address: str = Field(default="", max_length=300)
+    postal_code: str = Field(default="", max_length=20)
+    manager_name: str = Field(default="", max_length=120)
+    manager_phone: str = Field(default="", max_length=30)
+
+
+class CompanyUpdate(BaseModel):
+    name: str | None = None
+    code: str | None = None
+    kind: str | None = Field(default=None, pattern="^(LEGAL|REAL)$")
+    first_name: str | None = None
+    last_name: str | None = None
+    national_id: str | None = None
+    phone: str | None = None
+    address: str | None = None
+    postal_code: str | None = None
+    manager_name: str | None = None
+    manager_phone: str | None = None
+    active: bool | None = None
 
 
 class TaskCreate(BaseModel):
@@ -1119,7 +1267,76 @@ def logout(request: Request):
 @app.get("/api/me")
 def me(request: Request):
     user = current_user(request)
-    return {"id": user["id"], "name": user["name"], "username": user["username"], "role": user["role"]}
+    return {"id": user["id"], "name": user["name"], "username": user["username"], "role": user["role"],
+            "first_name": user["first_name"], "last_name": user["last_name"], "phone": user["phone"],
+            "permissions": effective_permissions(user)}
+
+
+# ===== PERMISSION MANAGEMENT ENDPOINTS (نقش‌ها و دسترسی‌ها) =====
+
+@app.get("/api/permissions/catalog")
+def permissions_catalog(request: Request):
+    user = current_user(request)
+    require_perm(user, "users.view")
+    return {
+        "catalog": PERMISSION_CATALOG,
+        "role_defaults": {role: role_default_permissions(role) for role in ("ADMIN", "CEO", "EMPLOYEE")},
+    }
+
+
+@app.get("/api/users/{user_id}/permissions")
+def get_user_permissions(user_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "users.view")
+    with db() as con:
+        target = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        if not target:
+            raise HTTPException(404, "کاربر یافت نشد")
+        override = None
+        if target["permissions"]:
+            try:
+                override = json.loads(target["permissions"])
+            except (ValueError, TypeError):
+                override = None
+        companies = con.execute("""SELECT c.id, c.code, c.name, c.kind FROM company_access a
+                                   JOIN companies c ON c.id=a.company_id WHERE a.user_id=? ORDER BY c.name""",
+                                (user_id,)).fetchall()
+        return {
+            "user": {"id": target["id"], "name": target["name"], "username": target["username"],
+                     "role": target["role"], "active": target["active"]},
+            "effective": effective_permissions(target),
+            "override": override,
+            "role_defaults": role_default_permissions(target["role"]),
+            "companies": [dict(c) for c in companies],
+        }
+
+
+class PermissionsModel(BaseModel):
+    permissions: dict[str, bool] | None = None  # None = بازگشت به پیش‌فرض نقش
+
+
+@app.put("/api/users/{user_id}/permissions")
+def set_user_permissions(user_id: str, payload: PermissionsModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "users.permissions")
+    if payload.permissions is not None and user_id == user["id"]:
+        # جلوگیری از قفل‌شدن مدیر روی خودش
+        raise HTTPException(400, "برای حساب خودتان نمی‌توانید دسترسی‌ها را محدود کنید")
+    with db() as con:
+        target = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        if not target:
+            raise HTTPException(404, "کاربر یافت نشد")
+        if payload.permissions is None:
+            con.execute("UPDATE users SET permissions=NULL WHERE id=?", (user_id,))
+            audit(con, user["id"], "PERMISSIONS_RESET", "user", user_id, {"role": target["role"]})
+        else:
+            valid_keys = {item["key"] for group in PERMISSION_CATALOG for item in group["items"]}
+            clean = {k: bool(v) for k, v in payload.permissions.items() if k in valid_keys}
+            con.execute("UPDATE users SET permissions=? WHERE id=?", (json.dumps(clean, ensure_ascii=False), user_id))
+            audit(con, user["id"], "PERMISSIONS_SET", "user", user_id, {"count": len(clean)})
+        updated = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        con.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))  # اعمال فوری دسترسی‌ها
+        return {"ok": True, "effective": effective_permissions(updated)}
 
 
 @app.get("/api/dashboard")
@@ -1139,6 +1356,7 @@ def dashboard(request: Request):
 @app.get("/api/companies")
 def companies(request: Request):
     user = current_user(request)
+    require_perm(user, "companies.view")
     with db() as con:
         if user["role"] in ("ADMIN", "CEO"):
             rows = con.execute("SELECT * FROM companies ORDER BY name").fetchall()
@@ -1159,37 +1377,68 @@ def list_references(company_id: str, request: Request):
 @app.post("/api/companies")
 def add_company(payload: CompanyCreate, request: Request):
     user = current_user(request)
-    require_role(user, "ADMIN")
+    require_perm(user, "companies.manage")
+    # نام: برای حقیقی از نام + نام خانوادگی ساخته می‌شود اگر خالی باشد
+    name = (payload.name or "").strip()
+    if payload.kind == "REAL" and not name:
+        name = f"{payload.first_name.strip()} {payload.last_name.strip()}".strip()
+    if not name or len(name) < 2:
+        raise HTTPException(400, "نام شرکت یا نام و نام خانوادگی شخص الزامی است")
     with db() as con:
         company_id = uid()
         try:
-            con.execute("INSERT INTO companies VALUES(?,?,?,?,?)", (company_id, payload.code.strip(), payload.name.strip(), 1, now()))
+            con.execute(
+                "INSERT INTO companies(id,code,name,active,created_at,kind,first_name,last_name,national_id,phone,address,postal_code,manager_name,manager_phone) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (company_id, payload.code.strip(), name, 1, now(), payload.kind,
+                 payload.first_name.strip(), payload.last_name.strip(), payload.national_id.strip(),
+                 payload.phone.strip(), payload.address.strip(), payload.postal_code.strip(),
+                 payload.manager_name.strip(), payload.manager_phone.strip())
+            )
         except sqlite3.IntegrityError:
             raise HTTPException(409, "کد شرکت تکراری است")
-        audit(con, user["id"], "COMPANY_CREATE", "company", company_id, {"code": payload.code})
-        return {"id": company_id, "code": payload.code, "name": payload.name}
+        audit(con, user["id"], "COMPANY_CREATE", "company", company_id, {"code": payload.code, "kind": payload.kind})
+        return {"id": company_id, "code": payload.code, "name": name, "kind": payload.kind}
 
 
 @app.get("/api/users")
 def users(request: Request):
     user = current_user(request)
-    require_role(user, "ADMIN", "CEO")
+    require_perm(user, "users.view")
     with db() as con:
-        return [dict(r) for r in con.execute("SELECT id,name,username,role,active,created_at FROM users ORDER BY name")]
+        rows = con.execute("SELECT id,name,username,role,active,created_at,first_name,last_name,phone,permissions FROM users ORDER BY name").fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d.pop("permissions", None)  # خروجی خام دسترسی‌ها را لو نده
+            n_access = con.execute("SELECT COUNT(*) FROM company_access WHERE user_id=?", (r["id"],)).fetchone()[0]
+            d["company_count"] = n_access
+            result.append(d)
+        return result
 
 
 @app.post("/api/users")
 def add_user(payload: UserCreate, request: Request):
     user = current_user(request)
-    require_role(user, "ADMIN")
+    require_perm(user, "users.manage")
     if payload.role not in ("EMPLOYEE", "CEO", "ADMIN"):
         raise HTTPException(400, "نقش نامعتبر است")
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", payload.username):
         raise HTTPException(400, "نام کاربری فقط می‌تواند شامل حروف انگلیسی، عدد و . _ - باشد")
+    if payload.password2 is not None and payload.password != payload.password2:
+        raise HTTPException(400, "رمز عبور و تکرار آن یکسان نیستند")
+    full_name = (payload.name or "").strip()
+    if not full_name:
+        full_name = f"{payload.first_name.strip()} {payload.last_name.strip()}".strip()
+    if len(full_name) < 2:
+        raise HTTPException(400, "نام و نام خانوادگی الزامی است")
     with db() as con:
         new_id = uid()
         try:
-            con.execute("INSERT INTO users VALUES(?,?,?,?,?,?,?)", (new_id, payload.name, payload.username.lower(), password_hash(payload.password), payload.role, 1, now()))
+            con.execute(
+                "INSERT INTO users(id,name,username,password_hash,role,active,created_at,first_name,last_name,phone,permissions) VALUES(?,?,?,?,?,1,?,?,?,?,NULL)",
+                (new_id, full_name, payload.username.lower(), password_hash(payload.password), payload.role, now(),
+                 payload.first_name.strip(), payload.last_name.strip(), payload.phone.strip())
+            )
             for company_id in set(payload.company_ids):
                 if not con.execute("SELECT 1 FROM companies WHERE id=?", (company_id,)).fetchone():
                     raise HTTPException(400, "شرکت انتخاب‌شده معتبر نیست")
@@ -1197,23 +1446,17 @@ def add_user(payload: UserCreate, request: Request):
         except sqlite3.IntegrityError:
             raise HTTPException(409, "نام کاربری تکراری است")
         audit(con, user["id"], "USER_CREATE", "user", new_id, {"role": payload.role, "company_count": len(set(payload.company_ids))})
-        return {"id": new_id, "name": payload.name, "username": payload.username, "role": payload.role}
+        return {"id": new_id, "name": full_name, "username": payload.username, "role": payload.role}
 
 
 # ===== USER MANAGEMENT (edit, deactivate, access control) =====
 
-class UserUpdate(BaseModel):
-    name: str | None = None
-    role: str | None = None
-    active: bool | None = None
-    password: str | None = None
-
 @app.get("/api/users/{user_id}")
 def get_user_detail(user_id: str, request: Request):
     user = current_user(request)
-    require_role(user, "ADMIN", "CEO")
+    require_perm(user, "users.view")
     with db() as con:
-        u = con.execute("SELECT id,name,username,role,active,created_at FROM users WHERE id=?", (user_id,)).fetchone()
+        u = con.execute("SELECT id,name,username,role,active,created_at,first_name,last_name,phone FROM users WHERE id=?", (user_id,)).fetchone()
         if not u:
             raise HTTPException(404, "کاربر یافت نشد")
         access = con.execute("""SELECT c.id, c.code, c.name FROM company_access a
@@ -1224,14 +1467,26 @@ def get_user_detail(user_id: str, request: Request):
 @app.patch("/api/users/{user_id}")
 def update_user(user_id: str, payload: UserUpdate, request: Request):
     user = current_user(request)
-    require_role(user, "ADMIN")
+    require_perm(user, "users.manage")
     with db() as con:
         existing = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
         if not existing:
             raise HTTPException(404, "کاربر یافت نشد")
         updates = {}
-        if payload.name is not None:
+        if payload.first_name is not None:
+            updates["first_name"] = payload.first_name.strip()
+        if payload.last_name is not None:
+            updates["last_name"] = payload.last_name.strip()
+        if payload.phone is not None:
+            updates["phone"] = payload.phone.strip()
+        if payload.name is not None and payload.name.strip():
             updates["name"] = payload.name.strip()
+        elif payload.first_name is not None or payload.last_name is not None:
+            fn = updates.get("first_name", existing["first_name"])
+            ln = updates.get("last_name", existing["last_name"])
+            composed = f"{fn} {ln}".strip()
+            if len(composed) >= 2:
+                updates["name"] = composed
         if payload.role is not None:
             if payload.role not in ("EMPLOYEE", "CEO", "ADMIN"):
                 raise HTTPException(400, "نقش نامعتبر")
@@ -1239,6 +1494,8 @@ def update_user(user_id: str, payload: UserUpdate, request: Request):
         if payload.active is not None:
             updates["active"] = 1 if payload.active else 0
         if payload.password is not None:
+            if payload.password2 is not None and payload.password != payload.password2:
+                raise HTTPException(400, "رمز عبور و تکرار آن یکسان نیستند")
             if len(payload.password) < 12:
                 raise HTTPException(400, "رمز عبور باید حداقل ۱۲ نویسه باشد")
             updates["password_hash"] = password_hash(payload.password)
@@ -1246,12 +1503,21 @@ def update_user(user_id: str, payload: UserUpdate, request: Request):
             set_clause = ", ".join(f"{k}=?" for k in updates)
             con.execute(f"UPDATE users SET {set_clause} WHERE id=?", (*updates.values(), user_id))
             audit(con, user["id"], "USER_UPDATE", "user", user_id, {k: str(v)[:50] for k, v in updates.items()})
+        # جایگزینی کامل شرکت‌های واگذارشده در صورت ارسال
+        if payload.company_ids is not None:
+            for company_id in set(payload.company_ids):
+                if not con.execute("SELECT 1 FROM companies WHERE id=?", (company_id,)).fetchone():
+                    raise HTTPException(400, "شرکت انتخاب‌شده معتبر نیست")
+            con.execute("DELETE FROM company_access WHERE user_id=?", (user_id,))
+            for company_id in set(payload.company_ids):
+                con.execute("INSERT INTO company_access VALUES(?,?)", (user_id, company_id))
+            audit(con, user["id"], "ACCESS_REPLACE", "user", user_id, {"company_count": len(set(payload.company_ids))})
         return {"ok": True, "id": user_id}
 
 @app.delete("/api/users/{user_id}")
 def deactivate_user(user_id: str, request: Request):
     user = current_user(request)
-    require_role(user, "ADMIN")
+    require_perm(user, "users.manage")
     if user_id == user["id"]:
         raise HTTPException(400, "نمی‌توانید حساب خودتان را غیرفعال کنید")
     with db() as con:
@@ -1270,7 +1536,7 @@ class GrantAccessModel(BaseModel):
 @app.post("/api/users/{user_id}/company-access")
 def grant_company_access(user_id: str, payload: GrantAccessModel, request: Request):
     user = current_user(request)
-    require_role(user, "ADMIN")
+    require_perm(user, "users.manage")
     with db() as con:
         u = con.execute("SELECT 1 FROM users WHERE id=? AND active=1", (user_id,)).fetchone()
         if not u:
@@ -1289,7 +1555,7 @@ def grant_company_access(user_id: str, payload: GrantAccessModel, request: Reque
 @app.delete("/api/users/{user_id}/company-access/{company_id}")
 def revoke_company_access(user_id: str, company_id: str, request: Request):
     user = current_user(request)
-    require_role(user, "ADMIN")
+    require_perm(user, "users.manage")
     with db() as con:
         con.execute("DELETE FROM company_access WHERE user_id=? AND company_id=?", (user_id, company_id))
         audit(con, user["id"], "ACCESS_REVOKE", "user", user_id, {"company_id": company_id})
@@ -1298,21 +1564,16 @@ def revoke_company_access(user_id: str, company_id: str, request: Request):
 
 # ===== COMPANY MANAGEMENT (edit, deactivate) =====
 
-class CompanyUpdate(BaseModel):
-    name: str | None = None
-    code: str | None = None
-    active: bool | None = None
-
 @app.patch("/api/companies/{company_id}")
 def update_company(company_id: str, payload: CompanyUpdate, request: Request):
     user = current_user(request)
-    require_role(user, "ADMIN")
+    require_perm(user, "companies.manage")
     with db() as con:
         existing = con.execute("SELECT * FROM companies WHERE id=?", (company_id,)).fetchone()
         if not existing:
             raise HTTPException(404, "شرکت یافت نشد")
         updates = {}
-        if payload.name is not None:
+        if payload.name is not None and payload.name.strip():
             updates["name"] = payload.name.strip()
         if payload.code is not None:
             # Check uniqueness
@@ -1320,18 +1581,24 @@ def update_company(company_id: str, payload: CompanyUpdate, request: Request):
             if dup:
                 raise HTTPException(409, "کد شرکت تکراری است")
             updates["code"] = payload.code.strip()
+        if payload.kind is not None:
+            updates["kind"] = payload.kind
+        for field in ("first_name", "last_name", "national_id", "phone", "address", "postal_code", "manager_name", "manager_phone"):
+            value = getattr(payload, field)
+            if value is not None:
+                updates[field] = value.strip()
         if payload.active is not None:
             updates["active"] = 1 if payload.active else 0
         if updates:
             set_clause = ", ".join(f"{k}=?" for k in updates)
             con.execute(f"UPDATE companies SET {set_clause} WHERE id=?", (*updates.values(), company_id))
-            audit(con, user["id"], "COMPANY_UPDATE", "company", company_id, updates)
+            audit(con, user["id"], "COMPANY_UPDATE", "company", company_id, {k: str(v)[:50] for k, v in updates.items()})
         return {"ok": True, "id": company_id}
 
 @app.delete("/api/companies/{company_id}")
 def deactivate_company(company_id: str, request: Request):
     user = current_user(request)
-    require_role(user, "ADMIN")
+    require_perm(user, "companies.manage")
     with db() as con:
         existing = con.execute("SELECT * FROM companies WHERE id=?", (company_id,)).fetchone()
         if not existing:
@@ -1347,7 +1614,7 @@ def deactivate_company(company_id: str, request: Request):
 @app.get("/api/companies/{company_id}/employees")
 def company_employees(company_id: str, request: Request):
     user = current_user(request)
-    require_role(user, "ADMIN", "CEO")
+    require_perm(user, "users.view")
     with db() as con:
         if not can_access_company(con, user, company_id):
             raise HTTPException(403, "دسترسی ندارید")
@@ -1385,7 +1652,7 @@ def change_password(payload: PasswordChange, request: Request):
 @app.get("/api/dashboard/v2")
 def dashboard_v2(request: Request):
     user = current_user(request)
-    require_role(user, "ADMIN", "CEO")
+    require_perm(user, "reports.kpi")
     with db() as con:
         total_companies = con.execute("SELECT COUNT(*) FROM companies WHERE active=1").fetchone()[0]
         total_users = con.execute("SELECT COUNT(*) FROM users WHERE active=1").fetchone()[0]
@@ -1468,7 +1735,7 @@ def list_tasks(request: Request, status_filter: str | None = None):
 @app.post("/api/tasks")
 def create_task(payload: TaskCreate, request: Request):
     user = current_user(request)
-    require_role(user, "ADMIN", "CEO")
+    require_perm(user, "tasks.create")
     if payload.priority not in ("NORMAL", "IMPORTANT", "CRITICAL"):
         raise HTTPException(400, "اولویت نامعتبر است")
     payload.fiscal_period=normalize_digits(payload.fiscal_period).strip().replace("-","/")
@@ -1586,7 +1853,7 @@ def latest_reference(con: sqlite3.Connection, company_id: str, period: str) -> s
 @app.post("/api/companies/{company_id}/reference")
 async def upload_reference(company_id: str, request: Request, fiscal_period: str = Form(...), coverage_start: str = Form(""), coverage_end: str = Form(""), file: UploadFile = File(...)):
     user = current_user(request)
-    require_role(user,"ADMIN","CEO")
+    require_perm(user, "tasks.reference")
     content = await file.read(MAX_UPLOAD+1)
     rows, _ = read_excel(file,content)
     fiscal_period=normalize_digits(fiscal_period).strip().replace("-","/")
@@ -1678,7 +1945,7 @@ def task_detail(task_id: str, request: Request):
 
 @app.post("/api/tasks/{task_id}/decision")
 def decide(task_id: str,payload: DecisionModel,request: Request):
-    user=current_user(request); require_role(user,"ADMIN","CEO")
+    user=current_user(request); require_perm(user, "tasks.decide")
     allowed={"APPROVED","APPROVED_WITH_EXCEPTION","RETURNED","CANCELLED"}
     methods={"REFERENCE_RECONCILIATION","MANUAL_REVIEW","NO_REFERENCE"}
     if payload.decision not in allowed or payload.review_method not in methods: raise HTTPException(400,"تصمیم یا روش بررسی نامعتبر است")
@@ -1721,7 +1988,7 @@ def add_comment(task_id: str,payload: CommentModel,request: Request):
 
 @app.get("/api/performance")
 def performance(request: Request):
-    user=current_user(request); require_role(user,"ADMIN","CEO")
+    user=current_user(request); require_perm(user, "reports.kpi")
     with db() as con:
         people=con.execute("SELECT id,name FROM users WHERE role='EMPLOYEE' AND active=1 ORDER BY name").fetchall()
         result=[]
@@ -1823,7 +2090,7 @@ def update_performance_entry(entry_id: str, payload: PerformanceEntryModel, requ
 @app.post("/api/performance-entries/{entry_id}/review")
 def review_performance_entry(entry_id: str, payload: PerformanceReviewModel, request: Request):
     user = current_user(request)
-    require_role(user,"ADMIN","CEO")
+    require_perm(user, "performance.review")
     if payload.status not in ("APPROVED", "NEEDS_EDIT"):
         raise HTTPException(400, "وضعیت بررسی معتبر نیست")
     with db() as con:
@@ -1869,7 +2136,7 @@ def create_request(payload: RequestModel,request: Request):
 
 @app.patch("/api/requests/{request_id}")
 def review_request(request_id:str,payload:ReviewRequestModel,request:Request):
-    user=current_user(request); require_role(user,"ADMIN","CEO")
+    user=current_user(request); require_perm(user, "requests.decide")
     if payload.status not in ("APPROVED","REJECTED"): raise HTTPException(400,"وضعیت بررسی نامعتبر است")
     with db() as con:
         item=con.execute("SELECT * FROM requests WHERE id=?",(request_id,)).fetchone()
@@ -1925,7 +2192,7 @@ def mark_read(notification_id:str,request:Request):
 
 @app.get("/api/audit")
 def get_audit(request:Request):
-    user=current_user(request); require_role(user,"ADMIN","CEO")
+    user=current_user(request); require_perm(user, "audit.view")
     with db() as con:
         rows=con.execute("SELECT a.*,u.name actor_name FROM audit_events a LEFT JOIN users u ON u.id=a.actor_id ORDER BY created_at DESC LIMIT 200").fetchall()
         return [{**dict(r),"details":json.loads(r["details"])} for r in rows]
@@ -2075,7 +2342,7 @@ class AutomationModel(BaseModel):
 @app.get("/api/automations")
 def list_automations(request: Request):
     user = current_user(request)
-    require_role(user, "ADMIN", "CEO")
+    require_perm(user, "automations.manage")
     with db() as con:
         rows = con.execute("SELECT * FROM automations ORDER BY created_at DESC").fetchall()
         return [{**dict(r), "trigger_config": json.loads(r["trigger_config"]), "action_config": json.loads(r["action_config"])} for r in rows]
@@ -2083,7 +2350,7 @@ def list_automations(request: Request):
 @app.post("/api/automations")
 def create_automation(payload: AutomationModel, request: Request):
     user = current_user(request)
-    require_role(user, "ADMIN", "CEO")
+    require_perm(user, "automations.manage")
     with db() as con:
         a_id = uid()
         con.execute("INSERT INTO automations VALUES(?,?,?,?,?,?,?,?,?,?)",
@@ -2096,7 +2363,7 @@ def create_automation(payload: AutomationModel, request: Request):
 @app.patch("/api/automations/{automation_id}")
 def toggle_automation(automation_id: str, request: Request):
     user = current_user(request)
-    require_role(user, "ADMIN", "CEO")
+    require_perm(user, "automations.manage")
     with db() as con:
         a = con.execute("SELECT * FROM automations WHERE id=?", (automation_id,)).fetchone()
         if not a:
@@ -2109,7 +2376,7 @@ def toggle_automation(automation_id: str, request: Request):
 @app.delete("/api/automations/{automation_id}")
 def delete_automation(automation_id: str, request: Request):
     user = current_user(request)
-    require_role(user, "ADMIN", "CEO")
+    require_perm(user, "automations.manage")
     with db() as con:
         con.execute("DELETE FROM automations WHERE id=?", (automation_id,))
         audit(con, user["id"], "AUTOMATION_DELETE", "automation", automation_id, {})
@@ -2119,7 +2386,7 @@ def delete_automation(automation_id: str, request: Request):
 def run_automations(request: Request):
     """Run all enabled automations — check overdue tasks, notify, etc."""
     user = current_user(request)
-    require_role(user, "ADMIN", "CEO")
+    require_perm(user, "automations.manage")
     results = []
     with db() as con:
         automations = con.execute("SELECT * FROM automations WHERE enabled=1").fetchall()
@@ -2213,7 +2480,7 @@ def send_message(channel_id: str, payload: ChatMessageModel, request: Request):
 @app.get("/api/iso30414/report")
 def iso30414_report(request: Request):
     user = current_user(request)
-    require_role(user, "ADMIN", "CEO")
+    require_perm(user, "reports.iso")
     with db() as con:
         # 11 areas of ISO 30414 with computed metrics
         total_users = con.execute("SELECT COUNT(*) FROM users WHERE active=1").fetchone()[0]
@@ -2282,7 +2549,7 @@ def iso30414_report(request: Request):
 @app.post("/api/iso30414/snapshot")
 def save_iso_snapshot(request: Request):
     user = current_user(request)
-    require_role(user, "ADMIN", "CEO")
+    require_perm(user, "reports.iso")
     # Get current metrics and save
     with db() as con:
         snap_id = uid()
@@ -2468,7 +2735,7 @@ def create_performance_v2(payload: PerformanceCreateModel, request: Request):
 @app.post("/api/performance-entries/{entry_id}/score")
 def score_performance(entry_id: str, payload: PerformanceScoreModel, request: Request):
     user = current_user(request)
-    require_role(user, "ADMIN", "CEO")
+    require_perm(user, "performance.review")
     with db() as con:
         entry = con.execute("SELECT * FROM performance_entries WHERE id=?", (entry_id,)).fetchone()
         if not entry:
@@ -2584,7 +2851,7 @@ class KPIModel(BaseModel):
 @app.get("/api/settings")
 def get_all_settings(request: Request):
     user = current_user(request)
-    require_role(user, "ADMIN", "CEO")
+    require_perm(user, "settings.view")
     with db() as con:
         return {
             "task_types": [dict(r) for r in con.execute("SELECT * FROM task_types ORDER BY name").fetchall()],
@@ -2601,7 +2868,7 @@ def list_tt(request: Request):
 
 @app.post("/api/settings/task-types")
 def create_tt(payload: TypeModel, request: Request):
-    user = current_user(request); require_role(user, "ADMIN")
+    user = current_user(request); require_perm(user, "settings.types")
     with db() as con:
         tid = uid()
         try: con.execute("INSERT INTO task_types VALUES(?,?,?,?,?,?)", (tid, payload.name, payload.description, payload.icon, 1 if payload.active else 0, now()))
@@ -2611,7 +2878,7 @@ def create_tt(payload: TypeModel, request: Request):
 
 @app.patch("/api/settings/task-types/{tid}")
 def update_tt(tid: str, payload: TypeModel, request: Request):
-    user = current_user(request); require_role(user, "ADMIN")
+    user = current_user(request); require_perm(user, "settings.types")
     with db() as con:
         if not con.execute("SELECT 1 FROM task_types WHERE id=?", (tid,)).fetchone(): raise HTTPException(404, "نوع پیدا نشد")
         con.execute("UPDATE task_types SET name=?, description=?, icon=?, active=? WHERE id=?", (payload.name, payload.description, payload.icon, 1 if payload.active else 0, tid))
@@ -2619,7 +2886,7 @@ def update_tt(tid: str, payload: TypeModel, request: Request):
 
 @app.delete("/api/settings/task-types/{tid}")
 def delete_tt(tid: str, request: Request):
-    user = current_user(request); require_role(user, "ADMIN")
+    user = current_user(request); require_perm(user, "settings.types")
     with db() as con: con.execute("DELETE FROM task_types WHERE id=?", (tid,)); return {"ok": True}
 
 @app.get("/api/settings/process-types")
@@ -2629,7 +2896,7 @@ def list_pt(request: Request):
 
 @app.post("/api/settings/process-types")
 def create_pt(payload: ProcessTypeModel, request: Request):
-    user = current_user(request); require_role(user, "ADMIN")
+    user = current_user(request); require_perm(user, "settings.types")
     with db() as con:
         tid = uid()
         try: con.execute("INSERT INTO process_types VALUES(?,?,?,?,?,?)", (tid, payload.name, payload.description, payload.default_steps, 1 if payload.active else 0, now()))
@@ -2638,7 +2905,7 @@ def create_pt(payload: ProcessTypeModel, request: Request):
 
 @app.patch("/api/settings/process-types/{tid}")
 def update_pt(tid: str, payload: ProcessTypeModel, request: Request):
-    user = current_user(request); require_role(user, "ADMIN")
+    user = current_user(request); require_perm(user, "settings.types")
     with db() as con:
         if not con.execute("SELECT 1 FROM process_types WHERE id=?", (tid,)).fetchone(): raise HTTPException(404, "نوع پیدا نشد")
         con.execute("UPDATE process_types SET name=?, description=?, default_steps=?, active=? WHERE id=?", (payload.name, payload.description, payload.default_steps, 1 if payload.active else 0, tid))
@@ -2646,7 +2913,7 @@ def update_pt(tid: str, payload: ProcessTypeModel, request: Request):
 
 @app.delete("/api/settings/process-types/{tid}")
 def delete_pt(tid: str, request: Request):
-    user = current_user(request); require_role(user, "ADMIN")
+    user = current_user(request); require_perm(user, "settings.types")
     with db() as con: con.execute("DELETE FROM process_types WHERE id=?", (tid,)); return {"ok": True}
 
 @app.get("/api/settings/role-types")
@@ -2656,7 +2923,7 @@ def list_rt(request: Request):
 
 @app.post("/api/settings/role-types")
 def create_rt(payload: RoleTypeModel, request: Request):
-    user = current_user(request); require_role(user, "ADMIN")
+    user = current_user(request); require_perm(user, "settings.types")
     with db() as con:
         tid = uid()
         try: con.execute("INSERT INTO role_types VALUES(?,?,?,?,?,?)", (tid, payload.name, payload.description, payload.permissions, 1 if payload.active else 0, now()))
@@ -2665,7 +2932,7 @@ def create_rt(payload: RoleTypeModel, request: Request):
 
 @app.patch("/api/settings/role-types/{tid}")
 def update_rt(tid: str, payload: RoleTypeModel, request: Request):
-    user = current_user(request); require_role(user, "ADMIN")
+    user = current_user(request); require_perm(user, "settings.types")
     with db() as con:
         if not con.execute("SELECT 1 FROM role_types WHERE id=?", (tid,)).fetchone(): raise HTTPException(404, "نوع پیدا نشد")
         con.execute("UPDATE role_types SET name=?, description=?, permissions=?, active=? WHERE id=?", (payload.name, payload.description, payload.permissions, 1 if payload.active else 0, tid))
@@ -2673,7 +2940,7 @@ def update_rt(tid: str, payload: RoleTypeModel, request: Request):
 
 @app.delete("/api/settings/role-types/{tid}")
 def delete_rt(tid: str, request: Request):
-    user = current_user(request); require_role(user, "ADMIN")
+    user = current_user(request); require_perm(user, "settings.types")
     with db() as con: con.execute("DELETE FROM role_types WHERE id=?", (tid,)); return {"ok": True}
 
 @app.get("/api/settings/performance-types")
@@ -2683,7 +2950,7 @@ def list_pft(request: Request):
 
 @app.post("/api/settings/performance-types")
 def create_pft(payload: PerfTypeModel, request: Request):
-    user = current_user(request); require_role(user, "ADMIN")
+    user = current_user(request); require_perm(user, "settings.types")
     with db() as con:
         tid = uid()
         try: con.execute("INSERT INTO performance_types VALUES(?,?,?,?,?,?)", (tid, payload.name, payload.category, payload.description, 1 if payload.active else 0, now()))
@@ -2692,7 +2959,7 @@ def create_pft(payload: PerfTypeModel, request: Request):
 
 @app.patch("/api/settings/performance-types/{tid}")
 def update_pft(tid: str, payload: PerfTypeModel, request: Request):
-    user = current_user(request); require_role(user, "ADMIN")
+    user = current_user(request); require_perm(user, "settings.types")
     with db() as con:
         if not con.execute("SELECT 1 FROM performance_types WHERE id=?", (tid,)).fetchone(): raise HTTPException(404, "نوع پیدا نشد")
         con.execute("UPDATE performance_types SET name=?, category=?, description=?, active=? WHERE id=?", (payload.name, payload.category, payload.description, 1 if payload.active else 0, tid))
@@ -2700,7 +2967,7 @@ def update_pft(tid: str, payload: PerfTypeModel, request: Request):
 
 @app.delete("/api/settings/performance-types/{tid}")
 def delete_pft(tid: str, request: Request):
-    user = current_user(request); require_role(user, "ADMIN")
+    user = current_user(request); require_perm(user, "settings.types")
     with db() as con: con.execute("DELETE FROM performance_types WHERE id=?", (tid,)); return {"ok": True}
 
 # ---- KPI CRUD ----
@@ -2711,7 +2978,7 @@ def list_kpis(request: Request):
 
 @app.post("/api/settings/kpis")
 def create_kpi(payload: KPIModel, request: Request):
-    user = current_user(request); require_role(user, "ADMIN", "CEO")
+    user = current_user(request); require_perm(user, "settings.kpi")
     with db() as con:
         tid = uid()
         ts = now()
@@ -2727,7 +2994,7 @@ def create_kpi(payload: KPIModel, request: Request):
 
 @app.patch("/api/settings/kpis/{tid}")
 def update_kpi(tid: str, payload: KPIModel, request: Request):
-    user = current_user(request); require_role(user, "ADMIN", "CEO")
+    user = current_user(request); require_perm(user, "settings.kpi")
     with db() as con:
         if not con.execute("SELECT 1 FROM kpis WHERE id=?", (tid,)).fetchone():
             raise HTTPException(404, "شاخص کلیدی پیدا نشد")
@@ -2743,7 +3010,7 @@ def update_kpi(tid: str, payload: KPIModel, request: Request):
 
 @app.delete("/api/settings/kpis/{tid}")
 def delete_kpi(tid: str, request: Request):
-    user = current_user(request); require_role(user, "ADMIN", "CEO")
+    user = current_user(request); require_perm(user, "settings.kpi")
     with db() as con:
         if not con.execute("SELECT 1 FROM kpis WHERE id=?", (tid,)).fetchone():
             raise HTTPException(404, "شاخص کلیدی پیدا نشد")
@@ -3407,7 +3674,7 @@ class PerfDecisionModel(BaseModel):
 def perf_submission_decision(entry_id: str, sub_id: str, payload: PerfDecisionModel, request: Request):
     """Manager approves / returns / rejects a submission."""
     user = current_user(request)
-    require_role(user, "ADMIN", "CEO")
+    require_perm(user, "performance.review")
     if payload.decision not in ("APPROVED", "RETURNED", "REJECTED"):
         raise HTTPException(400, "تصمیم باید APPROVED، RETURNED یا REJECTED باشد")
     with db() as con:

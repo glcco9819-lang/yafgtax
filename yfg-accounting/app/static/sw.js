@@ -1,5 +1,5 @@
 // YFG Service Worker v11 — themes restored as day/night only
-const CACHE='yfg-desk-v12';
+const CACHE='yfg-desk-v13';
 const ASSETS=['/','/static/style.css','/static/themes.css','/static/app.js','/static/performance.js','/static/enhanced.js','/static/themes.js','/static/icon.svg','/static/icon-192.png','/static/icon-512.png','/manifest.webmanifest'];
 
 self.addEventListener('install', e => e.waitUntil(
