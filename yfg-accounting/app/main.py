@@ -253,7 +253,35 @@ CREATE TABLE IF NOT EXISTS perf_submissions(
  original_name TEXT NOT NULL, stored_name TEXT NOT NULL, sha256 TEXT NOT NULL,
  note TEXT NOT NULL DEFAULT "", claimed_start TEXT, claimed_end TEXT,
  row_count INTEGER NOT NULL, voucher_count INTEGER NOT NULL, duplicate_rows INTEGER NOT NULL,
- out_of_range INTEGER NOT NULL, report_json TEXT NOT NULL, created_at TEXT NOT NULL
+ out_of_range INTEGER NOT NULL, report_json TEXT NOT NULL, created_at TEXT NOT NULL,
+ reference_id TEXT, -- مرجع مدیر (در صورت وجود)
+ template_valid INTEGER NOT NULL DEFAULT 1, -- اعتبارسنجی قالب (۱=معتبر، ۰=نامعتبر)
+ template_errors TEXT NOT NULL DEFAULT "[]", -- خطاهای قالب به JSON
+ status TEXT NOT NULL DEFAULT "PENDING", -- PENDING / APPROVED / RETURNED / REJECTED
+ manager_id TEXT, decision_at TEXT, decision_note TEXT NOT NULL DEFAULT ""
+);
+
+-- Performance reference versions (manager-uploaded reference files for reconciliation)
+CREATE TABLE IF NOT EXISTS perf_references(
+ id TEXT PRIMARY KEY, entry_id TEXT NOT NULL REFERENCES performance_entries(id),
+ company_id TEXT, fiscal_period TEXT NOT NULL DEFAULT "",
+ version INTEGER NOT NULL DEFAULT 1,
+ original_name TEXT NOT NULL, stored_name TEXT NOT NULL, sha256 TEXT NOT NULL,
+ row_count INTEGER NOT NULL, coverage_start TEXT, coverage_end TEXT,
+ uploaded_by TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL
+);
+
+-- Performance submission reconciliation diffs (row-level)
+CREATE TABLE IF NOT EXISTS perf_submission_diffs(
+ id TEXT PRIMARY KEY, submission_id TEXT NOT NULL REFERENCES perf_submissions(id),
+ source_row INTEGER NOT NULL, voucher TEXT NOT NULL DEFAULT "",
+ line TEXT NOT NULL DEFAULT "", date TEXT NOT NULL DEFAULT "",
+ account TEXT NOT NULL DEFAULT "", debit TEXT NOT NULL DEFAULT "",
+ credit TEXT NOT NULL DEFAULT "", description TEXT NOT NULL DEFAULT "",
+ issue_type TEXT NOT NULL, -- MISSING_FROM_REFERENCE / DEBIT_MISMATCH / CREDIT_MISMATCH / DATE_MISMATCH / DESCRIPTION_MISMATCH / VOUCHER_MISMATCH / DUPLICATE / OUT_OF_RANGE
+ issue_detail TEXT NOT NULL DEFAULT "",
+ ref_debit TEXT, ref_credit TEXT, ref_date TEXT, ref_account TEXT, ref_description TEXT,
+ created_at TEXT NOT NULL
 );
 
 -- Settings tables (task types, process types, role types, performance types)
@@ -333,10 +361,21 @@ def init_db() -> None:
             ("tasks", "parent_task_id", "TEXT REFERENCES tasks(id)"),
             ("tasks", "reference_version_id", "TEXT REFERENCES reference_versions(id)"),
             ("submissions", "reference_version_id", "TEXT REFERENCES reference_versions(id)"),
+            # Add new columns to perf_submissions (existing DBs from previous version)
+            ("perf_submissions", "reference_id", "TEXT"),
+            ("perf_submissions", "template_valid", "INTEGER NOT NULL DEFAULT 1"),
+            ("perf_submissions", "template_errors", "TEXT NOT NULL DEFAULT '[]'"),
+            ("perf_submissions", "status", "TEXT NOT NULL DEFAULT 'PENDING'"),
+            ("perf_submissions", "manager_id", "TEXT"),
+            ("perf_submissions", "decision_at", "TEXT"),
+            ("perf_submissions", "decision_note", "TEXT NOT NULL DEFAULT ''"),
         ):
             columns = {r["name"] for r in con.execute(f"PRAGMA table_info({table})")}
             if column not in columns:
-                con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+                try:
+                    con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+                except Exception:
+                    pass  # column might already exist or table doesn't exist yet
 
 
 init_db()
@@ -621,6 +660,220 @@ def reconcile(sub_rows: list[dict[str, str]], ref_rows: list[dict[str, str]] | N
     else:
         result["notes"].append("برای این تسک مرجع ثبت نشده؛ نتیجه تطبیق با روش NO_REFERENCE بررسی شود.")
     return result
+
+
+# ============ Template validation (file structure check) ============
+
+# Expected columns matching the /api/template download
+TEMPLATE_EXPECTED_HEADERS = ["voucher", "date", "account", "debit", "credit", "description"]
+
+
+def validate_template(rows: list[dict[str, str]]) -> dict[str, Any]:
+    """Validates the structure of uploaded Excel against the system template.
+    Returns: {valid: bool, errors: list[str], missing_columns: list[str], warnings: list[str]}
+    """
+    errors = []
+    warnings = []
+    if not rows:
+        errors.append("فایل خالی است — هیچ ردیف اطلاعاتی پیدا نشد")
+        return {"valid": False, "errors": errors, "warnings": warnings}
+
+    # All required fields must be non-empty for at least one row
+    missing_fields = []
+    for field in TEMPLATE_EXPECTED_HEADERS:
+        has_value = any(r.get(field, "") for r in rows)
+        if not has_value:
+            missing_fields.append(field)
+    if missing_fields:
+        errors.append(f"ستون‌های الزامی خالی یا ناقص است: {', '.join(missing_fields)}")
+
+    # Check at least one numeric value in debit/credit
+    has_debit = any(re.fullmatch(r"-?\d+(?:\.\d+)?", r.get("debit", "")) for r in rows)
+    has_credit = any(re.fullmatch(r"-?\d+(?:\.\d+)?", r.get("credit", "")) for r in rows)
+    if not has_debit and not has_credit:
+        errors.append("هیچ مقدار عددی در ستون‌های بدهکار/بستانکار پیدا نشد")
+
+    # Check duplicates within the same voucher+line
+    seen_keys = set()
+    duplicate_count = 0
+    for r in rows:
+        key = (r.get("voucher", ""), r.get("line", ""), r.get("date", ""))
+        if key in seen_keys:
+            duplicate_count += 1
+        seen_keys.add(key)
+    if duplicate_count:
+        warnings.append(f"{duplicate_count} ردیف تکراری (شماره سند + خط + تاریخ یکسان) پیدا شد")
+
+    return {
+        "valid": len(errors) == 0,
+        "errors": errors,
+        "warnings": warnings,
+        "row_count": len(rows),
+    }
+
+
+# ============ Detailed row-level reconciliation ============
+
+def reconcile_detailed(sub_rows: list[dict[str, str]], ref_rows: list[dict[str, str]] | None,
+                       start: str | None, end: str | None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Performs full reconciliation AND returns row-level diff list.
+    Returns: (summary_report, diffs)
+    Each diff: {source_row, voucher, line, date, account, debit, credit, description,
+                issue_type, issue_detail, ref_debit, ref_credit, ref_date, ref_account, ref_description}
+    """
+    summary = reconcile(sub_rows, ref_rows, start, end)
+    diffs: list[dict[str, Any]] = []
+
+    # 1. Internal duplicate detection
+    seen_keys: dict[tuple, int] = {}
+    for r in sub_rows:
+        key = duplicate_key(r)
+        seen_keys[key] = seen_keys.get(key, 0) + 1
+
+    for r in sub_rows:
+        key = duplicate_key(r)
+        src_row = int(r.get("source_row", 0))
+        # 2. Out-of-range check
+        if start and end and r.get("date"):
+            d = r["date"]
+            if re.match(r"^\d{4}/\d{2}/\d{2}$", d):
+                if d < normalize_digits(start).replace("-", "/") or d > normalize_digits(end).replace("-", "/"):
+                    diffs.append({
+                        "source_row": src_row, "voucher": r["voucher"], "line": r["line"],
+                        "date": r["date"], "account": r["account"], "debit": r["debit"],
+                        "credit": r["credit"], "description": r["description"],
+                        "issue_type": "OUT_OF_RANGE",
+                        "issue_detail": f"تاریخ {d} خارج از بازه اعلام‌شده ({start} تا {end}) است",
+                        "ref_debit": None, "ref_credit": None, "ref_date": None,
+                        "ref_account": None, "ref_description": None,
+                    })
+
+    if ref_rows is None:
+        # No reference — only internal checks (duplicates, out of range)
+        for r in sub_rows:
+            key = duplicate_key(r)
+            if seen_keys[key] > 1:
+                src_row = int(r.get("source_row", 0))
+                diffs.append({
+                    "source_row": src_row, "voucher": r["voucher"], "line": r["line"],
+                    "date": r["date"], "account": r["account"], "debit": r["debit"],
+                    "credit": r["credit"], "description": r["description"],
+                    "issue_type": "DUPLICATE",
+                    "issue_detail": "این ردیف با ردیف دیگری در فایل تکراری است (شماره سند + خط + تاریخ + حساب + مبالغ + شرح)",
+                    "ref_debit": None, "ref_credit": None, "ref_date": None,
+                    "ref_account": None, "ref_description": None,
+                })
+                seen_keys[key] -= 1  # only report duplicates once
+        return summary, diffs
+
+    # With reference — match by voucher+line (allows description differences)
+    ref_index: dict[tuple[str, str], list[dict]] = {}
+    for r in ref_rows:
+        key = (r["voucher"], r["line"])
+        ref_index.setdefault(key, []).append(r)
+
+    consumed: dict[tuple[str, str], int] = {}  # (voucher, line) → consumption count
+    matched_sub_rows: set[int] = set()
+
+    for r in sub_rows:
+        key = (r["voucher"], r["line"])
+        candidates = ref_index.get(key, [])
+        src_row = int(r.get("source_row", 0))
+        matched = False
+        consumed_count = consumed.get(key, 0)
+        if consumed_count < len(candidates):
+            ref_r = candidates[consumed_count]
+            consumed[key] = consumed_count + 1
+            matched_sub_rows.add(src_row)
+            matched = True
+            # Check if exact match
+            if (r["date"] == ref_r["date"] and r["account"] == ref_r["account"] and
+                r["debit"] == ref_r["debit"] and r["credit"] == ref_r["credit"] and
+                r["description"] == ref_r["description"]):
+                # Exact match — no diff
+                pass
+            else:
+                # Found by voucher+line but values differ — record mismatch
+                diff_details = []
+                if r["date"] != ref_r["date"]:
+                    diff_details.append(f"تاریخ: {r['date']} ≠ {ref_r['date']}")
+                if r["account"] != ref_r["account"]:
+                    diff_details.append(f"حساب: {r['account']} ≠ {ref_r['account']}")
+                if r["debit"] != ref_r["debit"]:
+                    diff_details.append(f"بدهکار: {r['debit']} ≠ {ref_r['debit']}")
+                if r["credit"] != ref_r["credit"]:
+                    diff_details.append(f"بستانکار: {r['credit']} ≠ {ref_r['credit']}")
+                if r["description"] != ref_r["description"]:
+                    diff_details.append(f"شرح متفاوت")
+                # Determine primary issue type
+                if r["debit"] != ref_r["debit"]:
+                    issue_type = "DEBIT_MISMATCH"
+                elif r["credit"] != ref_r["credit"]:
+                    issue_type = "CREDIT_MISMATCH"
+                elif r["date"] != ref_r["date"]:
+                    issue_type = "DATE_MISMATCH"
+                elif r["account"] != ref_r["account"]:
+                    issue_type = "ACCOUNT_MISMATCH"
+                else:
+                    issue_type = "DESCRIPTION_MISMATCH"
+                diffs.append({
+                    "source_row": src_row, "voucher": r["voucher"], "line": r["line"],
+                    "date": r["date"], "account": r["account"], "debit": r["debit"],
+                    "credit": r["credit"], "description": r["description"],
+                    "issue_type": issue_type,
+                    "issue_detail": "، ".join(diff_details),
+                    "ref_debit": ref_r["debit"], "ref_credit": ref_r["credit"],
+                    "ref_date": ref_r["date"], "ref_account": ref_r["account"],
+                    "ref_description": ref_r["description"],
+                })
+        if not matched:
+            # Submission row not found in reference at all
+            diffs.append({
+                "source_row": src_row, "voucher": r["voucher"], "line": r["line"],
+                "date": r["date"], "account": r["account"], "debit": r["debit"],
+                "credit": r["credit"], "description": r["description"],
+                "issue_type": "MISSING_FROM_REFERENCE",
+                "issue_detail": "این ردیف در فایل مرجع پیدا نشد (شماره سند + خط در مرجع وجود ندارد)",
+                "ref_debit": None, "ref_credit": None, "ref_date": None,
+                "ref_account": None, "ref_description": None,
+            })
+
+    # Internal duplicates check (within submission itself)
+    for r in sub_rows:
+        key = duplicate_key(r)
+        if seen_keys[key] > 1:
+            src_row = int(r.get("source_row", 0))
+            diffs.append({
+                "source_row": src_row, "voucher": r["voucher"], "line": r["line"],
+                "date": r["date"], "account": r["account"], "debit": r["debit"],
+                "credit": r["credit"], "description": r["description"],
+                "issue_type": "DUPLICATE",
+                "issue_detail": "ردیف تکراری در فایل ارسالی (همه فیلدها یکسان)",
+                "ref_debit": None, "ref_credit": None, "ref_date": None,
+                "ref_account": None, "ref_description": None,
+            })
+            seen_keys[key] -= 1
+
+    # Out-of-range rows
+    if start and end:
+        for r in sub_rows:
+            d = r.get("date", "")
+            if d and re.match(r"^\d{4}/\d{2}/\d{2}$", d):
+                if d < normalize_digits(start).replace("-", "/") or d > normalize_digits(end).replace("-", "/"):
+                    src_row = int(r.get("source_row", 0))
+                    diffs.append({
+                        "source_row": src_row, "voucher": r["voucher"], "line": r["line"],
+                        "date": r["date"], "account": r["account"], "debit": r["debit"],
+                        "credit": r["credit"], "description": r["description"],
+                        "issue_type": "OUT_OF_RANGE",
+                        "issue_detail": f"تاریخ {d} خارج از بازه ({start} تا {end})",
+                        "ref_debit": None, "ref_credit": None, "ref_date": None,
+                        "ref_account": None, "ref_description": None,
+                    })
+
+    summary["diff_count"] = len(diffs)
+    summary["diffs"] = diffs
+    return summary, diffs
 
 
 class SetupModel(BaseModel):
@@ -2801,33 +3054,335 @@ def list_perf_comments(entry_id: str, request: Request):
 
 @app.post("/api/performance-entries/{entry_id}/submit-file")
 async def perf_submit_file(entry_id: str, request: Request):
+    """Employee uploads Excel file. System validates against template (sample format).
+    If template doesn't match, returns error message. Otherwise saves submission.
+    Manager will later upload reference file and system reconciles."""
     user = current_user(request)
     form = await request.form()
     file = form.get("file")
     note = form.get("note", "")
+    claimed_start = form.get("claimed_start", "")
+    claimed_end = form.get("claimed_end", "")
     if not file:
         raise HTTPException(400, "فایل ارسال نشده")
-    content = await file.read()
+    content = await file.read(MAX_UPLOAD + 1)
     rows, sheet_name = read_excel(file, content)
     file_hash = hashlib.sha256(content).hexdigest()
+
+    # Step 1: Validate against template (system sample format)
+    template_check = validate_template(rows)
+    if not template_check["valid"]:
+        # File doesn't match template — return error with details so employee can fix
+        return {
+            "accepted": False,
+            "template_valid": False,
+            "errors": template_check["errors"],
+            "warnings": template_check["warnings"],
+            "row_count": len(rows),
+            "message": "فایل با قالب سیستم مطابقت ندارد. لطفاً خطاهای زیر را اصلاح کنید.",
+        }
+
     stored_name = f"{file_hash}.xlsx"
     (FILES / stored_name).write_bytes(content)
     with db() as con:
         entry = con.execute("SELECT * FROM performance_entries WHERE id=?", (entry_id,)).fetchone()
         if not entry:
             raise HTTPException(404, "عملکرد پیدا نشد")
-        # Save submission in submissions table (reuse)
+        # Check existing reference for this entry — if one exists, reconcile now
+        ref = con.execute("SELECT * FROM perf_references WHERE entry_id=? ORDER BY version DESC LIMIT 1", (entry_id,)).fetchone()
+        ref_rows = None
+        ref_id = None
+        if ref:
+            ref_id = ref["id"]
+            ref_content = (FILES / ref["stored_name"]).read_bytes()
+            ref_rows, _ = read_excel(UploadFile(filename=ref["original_name"], file=None), ref_content)
+
+        # Step 2: Reconcile (with reference if available)
+        report, diffs = reconcile_detailed(rows, ref_rows, claimed_start or None, claimed_end or None)
+        report["template_valid"] = True
+        report["template_errors"] = []
+        report["template_warnings"] = template_check.get("warnings", [])
+        report["reference_id"] = ref_id
+        report["reference_attached"] = ref_rows is not None
+
+        # Step 3: Save submission
         sub_id = uid()
         version = con.execute("SELECT COUNT(*) FROM perf_submissions WHERE entry_id=?", (entry_id,)).fetchone()[0] + 1
-        report = reconcile(rows, None, form.get("claimed_start", ""), form.get("claimed_end", ""))
-        con.execute("""INSERT INTO perf_submissions VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                     (sub_id, entry_id, user["id"], version, file.filename, stored_name, file_hash,
-                      note, form.get("claimed_start",""), form.get("claimed_end",""),
-                      report["row_count"], report["voucher_count"], report["duplicate_rows"],
-                      report["out_of_range"], json.dumps(report, ensure_ascii=False), now()))
-        con.execute("INSERT INTO performance_events VALUES(?,?,?,?,?,?)", (uid(), entry_id, user["id"], "FILE_SUBMITTED", json.dumps({"version": version, "rows": report["row_count"]}), now()))
-        audit(con, user["id"], "PERF_FILE_SUBMIT", "performance_entry", entry_id, {"rows": report["row_count"]})
-        return {"id": sub_id, "version": version, "report": report}
+        ts = now()
+        # INSERT with all new columns
+        con.execute("""INSERT INTO perf_submissions
+            (id, entry_id, user_id, version, original_name, stored_name, sha256,
+             note, claimed_start, claimed_end,
+             row_count, voucher_count, duplicate_rows, out_of_range, report_json, created_at,
+             reference_id, template_valid, template_errors, status, manager_id, decision_at, decision_note)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (sub_id, entry_id, user["id"], version, file.filename, stored_name, file_hash,
+             note, claimed_start, claimed_end,
+             report["row_count"], report["voucher_count"], report["duplicate_rows"],
+             report["out_of_range"], json.dumps(report, ensure_ascii=False), ts,
+             ref_id, 1, "[]", "PENDING", None, None, ""))
+
+        # Step 4: Save row-level diffs
+        for d in diffs:
+            con.execute("""INSERT INTO perf_submission_diffs
+                (id, submission_id, source_row, voucher, line, date, account, debit, credit, description,
+                 issue_type, issue_detail, ref_debit, ref_credit, ref_date, ref_account, ref_description, created_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (uid(), sub_id, d["source_row"], d["voucher"], d["line"], d["date"],
+                 d["account"], d["debit"], d["credit"], d["description"],
+                 d["issue_type"], d["issue_detail"], d.get("ref_debit"), d.get("ref_credit"),
+                 d.get("ref_date"), d.get("ref_account"), d.get("ref_description"), ts))
+
+        # Notify managers about new submission
+        con.execute("INSERT INTO performance_events VALUES(?,?,?,?,?,?)",
+            (uid(), entry_id, user["id"], "FILE_SUBMITTED",
+             json.dumps({"version": version, "rows": report["row_count"], "diffs": len(diffs)}), ts))
+        managers = con.execute("SELECT id FROM users WHERE role IN ('ADMIN','CEO') AND active=1").fetchall()
+        for m in managers:
+            notify(con, m["id"], "ثبت عملکرد جدید برای بررسی",
+                   f"عملکرد «{entry['title']}» — نسخه {version} ({len(diffs)} اختلاف)")
+        audit(con, user["id"], "PERF_FILE_SUBMIT", "performance_entry", entry_id,
+              {"rows": report["row_count"], "diffs": len(diffs)})
+        return {
+            "id": sub_id, "version": version, "accepted": True,
+            "template_valid": True, "report": report, "diff_count": len(diffs),
+            "diffs_sample": diffs[:20],  # first 20 diffs for preview
+        }
+
+
+# ============ Manager uploads reference Excel for performance entry ============
+
+@app.post("/api/performance-entries/{entry_id}/reference")
+async def perf_upload_reference(entry_id: str, request: Request):
+    """Manager uploads the reference Excel file for a performance entry.
+    System then re-reconciles all existing submissions against this reference."""
+    user = current_user(request)
+    require_role(user, "ADMIN", "CEO")
+    form = await request.form()
+    file = form.get("file")
+    fiscal_period = form.get("fiscal_period", "")
+    coverage_start = form.get("coverage_start", "")
+    coverage_end = form.get("coverage_end", "")
+    if not file:
+        raise HTTPException(400, "فایل مرجع ارسال نشده")
+    content = await file.read(MAX_UPLOAD + 1)
+    rows, _ = read_excel(file, content)
+    digest = hashlib.sha256(content).hexdigest()
+    stored = f"{uuid.uuid4().hex}.xlsx"
+    (FILES / stored).write_bytes(content)
+    with db() as con:
+        entry = con.execute("SELECT * FROM performance_entries WHERE id=?", (entry_id,)).fetchone()
+        if not entry:
+            raise HTTPException(404, "عملکرد پیدا نشد")
+        # Determine version
+        version = con.execute("SELECT COALESCE(MAX(version), 0) + 1 FROM perf_references WHERE entry_id=?", (entry_id,)).fetchone()[0]
+        ref_id = uid()
+        ts = now()
+        # Try to find company_id from entry's submissions (since entry itself may not have company)
+        company_id = entry["user_id"]  # fallback
+        con.execute("""INSERT INTO perf_references
+            (id, entry_id, company_id, fiscal_period, version, original_name, stored_name, sha256,
+             row_count, coverage_start, coverage_end, uploaded_by, created_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (ref_id, entry_id, company_id, fiscal_period, version, file.filename, stored, digest,
+             len(rows), coverage_start or None, coverage_end or None, user["id"], ts))
+
+        # Re-reconcile all existing submissions against this new reference
+        existing_subs = con.execute("SELECT * FROM perf_submissions WHERE entry_id=? ORDER BY version", (entry_id,)).fetchall()
+        re_reconciled_count = 0
+        for sub in existing_subs:
+            sub_content = (FILES / sub["stored_name"]).read_bytes()
+            sub_rows, _ = read_excel(UploadFile(filename=sub["original_name"], file=None), sub_content)
+            report, diffs = reconcile_detailed(sub_rows, rows, sub["claimed_start"], sub["claimed_end"])
+            report["template_valid"] = bool(sub["template_valid"])
+            report["template_errors"] = json.loads(sub["template_errors"] or "[]")
+            report["reference_id"] = ref_id
+            report["reference_attached"] = True
+            # Update submission
+            con.execute("""UPDATE perf_submissions SET
+                report_json=?, reference_id=?, row_count=?, voucher_count=?,
+                duplicate_rows=?, out_of_range=? WHERE id=?""",
+                (json.dumps(report, ensure_ascii=False), ref_id, report["row_count"],
+                 report["voucher_count"], report["duplicate_rows"], report["out_of_range"], sub["id"]))
+            # Delete old diffs for this submission
+            con.execute("DELETE FROM perf_submission_diffs WHERE submission_id=?", (sub["id"],))
+            for d in diffs:
+                con.execute("""INSERT INTO perf_submission_diffs
+                    (id, submission_id, source_row, voucher, line, date, account, debit, credit, description,
+                     issue_type, issue_detail, ref_debit, ref_credit, ref_date, ref_account, ref_description, created_at)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (uid(), sub["id"], d["source_row"], d["voucher"], d["line"], d["date"],
+                     d["account"], d["debit"], d["credit"], d["description"],
+                     d["issue_type"], d["issue_detail"], d.get("ref_debit"), d.get("ref_credit"),
+                     d.get("ref_date"), d.get("ref_account"), d.get("ref_description"), ts))
+            re_reconciled_count += 1
+
+        con.execute("INSERT INTO performance_events VALUES(?,?,?,?,?,?)",
+            (uid(), entry_id, user["id"], "REFERENCE_UPLOADED",
+             json.dumps({"version": version, "rows": len(rows), "re_reconciled": re_reconciled_count}), ts))
+        audit(con, user["id"], "PERF_REF_UPLOAD", "perf_reference", ref_id,
+              {"entry_id": entry_id, "rows": len(rows), "re_reconciled": re_reconciled_count})
+        return {
+            "id": ref_id, "version": version, "row_count": len(rows),
+            "re_reconciled_submissions": re_reconciled_count,
+            "message": f"مرجع بارگذاری شد و {re_reconciled_count} ثبت عملکرد مجدداً بررسی شد",
+        }
+
+
+# ============ List reference versions for performance entry ============
+
+@app.get("/api/performance-entries/{entry_id}/references")
+def list_perf_references(entry_id: str, request: Request):
+    user = current_user(request)
+    with db() as con:
+        entry = con.execute("SELECT * FROM performance_entries WHERE id=?", (entry_id,)).fetchone()
+        if not entry:
+            raise HTTPException(404, "عملکرد پیدا نشد")
+        rows = con.execute("""
+            SELECT r.*, u.name AS uploaded_by_name
+            FROM perf_references r JOIN users u ON u.id=r.uploaded_by
+            WHERE r.entry_id=? ORDER BY r.version DESC""", (entry_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+
+# ============ Get diffs for a specific submission ============
+
+@app.get("/api/performance-entries/{entry_id}/submissions/{sub_id}/diffs")
+def get_perf_submission_diffs(entry_id: str, sub_id: str, request: Request):
+    user = current_user(request)
+    with db() as con:
+        sub = con.execute("SELECT * FROM perf_submissions WHERE id=? AND entry_id=?", (sub_id, entry_id)).fetchone()
+        if not sub:
+            raise HTTPException(404, "ارسال پیدا نشد")
+        # Permission: owner or admin
+        if sub["user_id"] != user["id"] and user["role"] not in ("ADMIN", "CEO"):
+            raise HTTPException(403, "دسترسی ندارید")
+        diffs = con.execute("SELECT * FROM perf_submission_diffs WHERE submission_id=? ORDER BY source_row", (sub_id,)).fetchall()
+        return {
+            "submission": dict(sub),
+            "report": json.loads(sub["report_json"]),
+            "diffs": [dict(d) for d in diffs],
+            "diff_count": len(diffs),
+        }
+
+
+# ============ Download diffs as Excel ============
+
+@app.get("/api/performance-entries/{entry_id}/submissions/{sub_id}/diffs/excel")
+def download_perf_submission_diffs_excel(entry_id: str, sub_id: str, request: Request):
+    """Download all diffs as an Excel file (for offline review)."""
+    user = current_user(request)
+    with db() as con:
+        sub = con.execute("SELECT * FROM perf_submissions WHERE id=? AND entry_id=?", (sub_id, entry_id)).fetchone()
+        if not sub:
+            raise HTTPException(404, "ارسال پیدا نشد")
+        if sub["user_id"] != user["id"] and user["role"] not in ("ADMIN", "CEO"):
+            raise HTTPException(403, "دسترسی ندارید")
+        diffs = con.execute("SELECT * FROM perf_submission_diffs WHERE submission_id=? ORDER BY source_row", (sub_id,)).fetchall()
+        # Build Excel
+        from io import BytesIO
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "اختلافات"
+        # Header row
+        headers = ["ردیف فایل", "شماره سند", "خط", "تاریخ", "حساب", "بدهکار", "بستانکار", "شرح",
+                   "نوع اختلاف", "جزئیات اختلاف",
+                   "بدهکار مرجع", "بستانکار مرجع", "تاریخ مرجع", "حساب مرجع", "شرح مرجع"]
+        ws.append(headers)
+        # Style header
+        header_fill = PatternFill(start_color="0b8f89", end_color="0b8f89", fill_type="solid")
+        header_font = Font(color="FFFFFF", bold=True, size=11)
+        for col_idx in range(1, len(headers) + 1):
+            cell = ws.cell(row=1, column=col_idx)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        # Color-code issue types
+        issue_colors = {
+            "MISSING_FROM_REFERENCE": "FECACA",    # red
+            "DEBIT_MISMATCH": "FED7AA",            # orange
+            "CREDIT_MISMATCH": "FED7AA",           # orange
+            "DATE_MISMATCH": "FEF3C7",              # yellow
+            "ACCOUNT_MISMATCH": "FEF3C7",           # yellow
+            "DESCRIPTION_MISMATCH": "E0F2FE",      # blue
+            "DUPLICATE": "F3E8FF",                 # purple
+            "OUT_OF_RANGE": "FEE2E2",              # red
+        }
+        issue_labels = {
+            "MISSING_FROM_REFERENCE": "در مرجع نیست",
+            "DEBIT_MISMATCH": "اختلاف بدهکار",
+            "CREDIT_MISMATCH": "اختلاف بستانکار",
+            "DATE_MISMATCH": "اختلاف تاریخ",
+            "ACCOUNT_MISMATCH": "اختلاف حساب",
+            "DESCRIPTION_MISMATCH": "اختلاف شرح",
+            "DUPLICATE": "ردیف تکراری",
+            "OUT_OF_RANGE": "خارج از بازه",
+        }
+        for d in diffs:
+            row_data = [
+                d["source_row"], d["voucher"], d["line"], d["date"], d["account"],
+                d["debit"], d["credit"], d["description"],
+                issue_labels.get(d["issue_type"], d["issue_type"]),
+                d["issue_detail"],
+                d["ref_debit"] or "", d["ref_credit"] or "", d["ref_date"] or "",
+                d["ref_account"] or "", d["ref_description"] or "",
+            ]
+            ws.append(row_data)
+            row_idx = ws.max_row
+            color = issue_colors.get(d["issue_type"], "FFFFFF")
+            fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
+            for col_idx in range(1, len(headers) + 1):
+                ws.cell(row=row_idx, column=col_idx).fill = fill
+        # Column widths
+        for col_letter, width in zip("ABCDEFGHIJKLMNO", [10, 18, 8, 14, 22, 14, 14, 30, 18, 50, 14, 14, 14, 22, 30]):
+            ws.column_dimensions[col_letter].width = width
+        ws.freeze_panes = "A2"
+        ws.auto_filter.ref = f"A1:{chr(64 + len(headers))}1"
+        out = BytesIO()
+        wb.save(out)
+        out.seek(0)
+        from fastapi.responses import StreamingResponse
+        filename = f"diffs-entry-{entry_id}-v{sub['version']}.xlsx"
+        return StreamingResponse(out,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+# ============ Manager decision on a submission ============
+
+class PerfDecisionModel(BaseModel):
+    decision: str = Field(min_length=2, max_length=20)  # APPROVED / RETURNED / REJECTED
+    note: str = Field(default="", max_length=2000)
+
+
+@app.post("/api/performance-entries/{entry_id}/submissions/{sub_id}/decision")
+def perf_submission_decision(entry_id: str, sub_id: str, payload: PerfDecisionModel, request: Request):
+    """Manager approves / returns / rejects a submission."""
+    user = current_user(request)
+    require_role(user, "ADMIN", "CEO")
+    if payload.decision not in ("APPROVED", "RETURNED", "REJECTED"):
+        raise HTTPException(400, "تصمیم باید APPROVED، RETURNED یا REJECTED باشد")
+    with db() as con:
+        sub = con.execute("SELECT * FROM perf_submissions WHERE id=? AND entry_id=?", (sub_id, entry_id)).fetchone()
+        if not sub:
+            raise HTTPException(404, "ارسال پیدا نشد")
+        ts = now()
+        con.execute("""UPDATE perf_submissions SET status=?, manager_id=?, decision_at=?, decision_note=?
+                       WHERE id=?""",
+                     (payload.decision, user["id"], ts, payload.note, sub_id))
+        con.execute("INSERT INTO performance_events VALUES(?,?,?,?,?,?)",
+                    (uid(), entry_id, user["id"], f"SUBMISSION_{payload.decision}",
+                     json.dumps({"submission_id": sub_id, "version": sub["version"], "note": payload.note}), ts))
+        # Notify employee
+        notify(con, sub["user_id"], f"تصمیم مدیر: {payload.decision}",
+               f"نسخه {sub['version']} از عملکرد — {payload.decision}")
+        audit(con, user["id"], f"PERF_SUB_{payload.decision}", "perf_submission", sub_id,
+              {"entry_id": entry_id, "note": payload.note})
+        return {"ok": True, "status": payload.decision}
+
+
 
 @app.get("/api/performance-entries/{entry_id}/submissions")
 def list_perf_submissions(entry_id: str, request: Request):
@@ -2838,8 +3393,21 @@ def list_perf_submissions(entry_id: str, request: Request):
             raise HTTPException(404, "عملکرد پیدا نشد")
         if entry["user_id"] != user["id"] and user["role"] not in ("ADMIN", "CEO"):
             raise HTTPException(403, "دسترسی ندارید")
-        rows = con.execute("SELECT * FROM perf_submissions WHERE task_id=? ORDER BY version", (entry_id,)).fetchall()
-        return [{**dict(r), "report": json.loads(r["report_json"])} for r in rows]
+        rows = con.execute("""
+            SELECT s.*, u.name AS user_name, m.name AS manager_name,
+                   (SELECT COUNT(*) FROM perf_submission_diffs WHERE submission_id=s.id) AS diff_count,
+                   (SELECT COUNT(*) FROM perf_references WHERE entry_id=s.entry_id) AS reference_count
+            FROM perf_submissions s
+            JOIN users u ON u.id=s.user_id
+            LEFT JOIN users m ON m.id=s.manager_id
+            WHERE s.entry_id=? ORDER BY s.version DESC""", (entry_id,)).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["report"] = json.loads(r["report_json"])
+            del d["report_json"]
+            result.append(d)
+        return result
 
 @app.post("/api/performance-entries/{entry_id}/timer/start")
 def perf_timer_start(entry_id: str, request: Request):
