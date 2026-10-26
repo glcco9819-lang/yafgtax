@@ -28,21 +28,37 @@ async function renderPerformanceEntries(){
   const isManager = ['ADMIN','CEO'].includes(state.me.role);
   const pending = rows.filter(r => r.status === 'PENDING').length;
   const totalMinutes = rows.reduce((sum, r) => sum + Number(r.duration_minutes || 0), 0);
+  // Fetch companies for the dropdown (available to all users with company access)
+  let companies = [];
+  try { companies = await api('/companies'); } catch(e) { companies = []; }
+  state.yfgCompanies = companies;
   const action = head('ثبت عملکرد', 'فعالیت روزانه و زمان صرف‌شده را مستقل از ماژول تسک ثبت کنید.', `<button class="btn primary" data-action="new-performance">＋ ثبت عملکرد</button>`);
   const cards = `<div class="stats-grid"><article class="stat-card"><div class="stat-top">گزارش‌ها</div><div class="stat-value">${num(rows.length)}</div><div class="stat-caption">در فهرست قابل مشاهده</div></article><article class="stat-card"><div class="stat-top">در انتظار بررسی</div><div class="stat-value">${num(pending)}</div><div class="stat-caption">نیازمند اقدام مدیر</div></article><article class="stat-card"><div class="stat-top">زمان ثبت‌شده</div><div class="stat-value">${num(Math.round(totalMinutes / 60 * 10) / 10)} <small>ساعت</small></div><div class="stat-caption">مجموع همین فهرست</div></article></div>`;
 
+  const priorityLabel = {NORMAL:'عادی', IMPORTANT:'مهم', CRITICAL:'خیلی مهم'};
   const table = rows.length ? `<div class="table-card"><table class="data-table"><thead><tr>
     ${isManager ? '<th>کارمند</th>' : ''}
-    <th>تاریخ</th><th>نوع</th><th>شرح فعالیت</th><th>زمان</th>
+    <th>تاریخ</th><th>شرکت</th><th>نوع</th><th>شرح فعالیت</th><th>زمان</th><th>اولویت</th><th>مهلت</th><th>پیشرفت</th>
     <th>وضعیت</th><th>فایل اکسل</th><th>یادداشت مدیر</th><th></th>
   </tr></thead><tbody>
     ${rows.map(r => `
       <tr>
         ${isManager ? `<td>${esc(r.user_name || '—')}</td>` : ''}
         <td>${esc(r.work_date)}</td>
+        <td>${esc(r.company_name || '—')}</td>
         <td>${esc(performanceCategories[r.category] || r.category)}</td>
-        <td><b>${esc(r.title)}</b>${r.description ? `<small class="muted block">${esc(r.description)}</small>` : ''}</td>
+        <td><b>${esc(r.title)}</b>${r.description ? `<small class="muted block">${esc(r.description)}</small>` : ''}${r.fiscal_period ? `<small class="muted block">دوره: ${esc(r.fiscal_period)}</small>` : ''}</td>
         <td>${num(r.duration_minutes)} دقیقه</td>
+        <td><span class="tag">${esc(priorityLabel[r.priority] || r.priority || 'عادی')}</span>${r.weight > 1 ? ` <small style="color:#64748b;">وزن ${num(r.weight)}</small>` : ''}</td>
+        <td>${esc(r.due_date || '—')}</td>
+        <td>
+          <div style="display:flex;align-items:center;gap:4px;">
+            <div style="width:50px;height:5px;background:#eef2f3;border-radius:3px;overflow:hidden;">
+              <div style="width:${Math.min(100, r.progress || 0)}%;height:100%;background:#0b8f89;"></div>
+            </div>
+            <small>${num(r.progress || 0)}٪</small>
+          </div>
+        </td>
         <td>${statusTag(r.status)}</td>
         <td><button class="btn soft small" data-action="perf-files" data-id="${esc(r.id)}">📁 فایل‌ها</button></td>
         <td>${r.review_note ? esc(r.review_note) : '—'}</td>
@@ -63,12 +79,23 @@ async function renderPerformanceEntries(){
 function openPerformanceForm(entryId = null){
   const existing = state.performanceEntries.find(x => x.id === entryId);
   const today = new Intl.DateTimeFormat('fa-IR-u-ca-persian', {year:'numeric', month:'2-digit', day:'2-digit'}).format(new Date()).replaceAll('-', '/');
-  const form = modal(existing ? 'ویرایش ثبت عملکرد' : 'ثبت عملکرد روزانه', 'فعالیت را با تاریخ شمسی و زمان صرف‌شده ثبت کنید.', `<form id="performanceEntryForm" class="stack">
+  const companies = state.yfgCompanies || [];
+  const companyOptions = companies.map(c => `<option value="${esc(c.id)}" ${existing?.company_id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
+  const priorityOptions = [['NORMAL','عادی'],['IMPORTANT','مهم'],['CRITICAL','خیلی مهم']].map(([key, label]) =>
+    `<option value="${key}" ${existing?.priority === key ? 'selected' : ''}>${label}</option>`).join('');
+  const form = modal(existing ? 'ویرایش ثبت عملکرد' : 'ثبت عملکرد روزانه', 'فعالیت را با تاریخ شمسی و زمان صرف‌شده ثبت کنید. می‌توانید شرکت، دوره مالی، اولویت و مهلت را هم مشخص کنید.', `<form id="performanceEntryForm" class="stack">
     <div class="form-grid">
       <label>تاریخ شمسی<input name="work_date" required maxlength="12" placeholder="۱۴۰۵/۰۷/۲۷" value="${esc(existing?.work_date || today)}"></label>
       <label>نوع عملکرد<select name="category" required>${Object.entries(performanceCategories).map(([key, label]) => `<option value="${key}" ${existing?.category === key ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
       <label class="wide-field">عنوان فعالیت<input name="title" required minlength="2" maxlength="120" placeholder="مثلاً بررسی اسناد شرکت الف" value="${esc(existing?.title || '')}"></label>
       <label>مدت زمان (دقیقه)<input name="duration_minutes" type="number" required min="1" max="1440" step="5" value="${esc(existing?.duration_minutes || 60)}"></label>
+      <label>شرکت (اختیاری)<select name="company_id"><option value="">— بدون شرکت —</option>${companyOptions}</select></label>
+      <label>دوره مالی<input name="fiscal_period" maxlength="40" placeholder="۱۴۰۵/۰۷" value="${esc(existing?.fiscal_period || '')}"></label>
+      <label>اولویت<select name="priority">${priorityOptions}</select></label>
+      <label>وزن ارزیابی<select name="weight"><option value="1" ${existing?.weight === 1 ? 'selected' : ''}>عادی · ۱</option><option value="2" ${existing?.weight === 2 ? 'selected' : ''}>مهم · ۲</option><option value="3" ${existing?.weight === 3 ? 'selected' : ''}>خیلی مهم · ۳</option></select></label>
+      <label>مهلت (شمسی، اختیاری)<input name="due_date" maxlength="12" placeholder="۱۴۰۵/۰۷/۳۰" value="${esc(existing?.due_date || '')}"></label>
+      <label>پیشرفت (٪)<input name="progress" type="number" min="0" max="100" value="${esc(existing?.progress || 0)}"></label>
+      <label class="wide-field">دامنه کار<input name="scope" maxlength="500" placeholder="مثلاً اسناد از ۱۴۰۵/۰۷/۰۱ تا ۱۴۰۵/۰۷/۳۰" value="${esc(existing?.scope || '')}"></label>
       <label class="wide-field">شرح یا نتیجه<textarea name="description" maxlength="2000" placeholder="خلاصهٔ کار انجام‌شده یا نتیجهٔ آن">${esc(existing?.description || '')}</textarea></label>
     </div>
     <button class="btn primary">${existing ? 'ذخیره تغییرات' : 'ثبت برای بررسی'}</button>
@@ -77,6 +104,9 @@ function openPerformanceForm(entryId = null){
     e.preventDefault();
     const values = Object.fromEntries(new FormData(e.currentTarget));
     values.duration_minutes = Number(values.duration_minutes);
+    values.weight = Number(values.weight);
+    values.progress = Number(values.progress);
+    values.due_date = values.due_date || '';
     try {
       await api(existing ? `/performance-entries/${existing.id}` : '/performance-entries', json(existing ? 'PUT' : 'POST', values));
       $('#modalRoot').innerHTML = '';

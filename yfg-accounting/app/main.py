@@ -134,7 +134,16 @@ CREATE TABLE IF NOT EXISTS performance_entries(
  duration_minutes INTEGER NOT NULL CHECK(duration_minutes BETWEEN 1 AND 1440),
  status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING','APPROVED','NEEDS_EDIT')),
  review_note TEXT NOT NULL DEFAULT '', reviewer_id TEXT REFERENCES users(id), reviewed_at TEXT,
- created_at TEXT NOT NULL
+ created_at TEXT NOT NULL,
+ -- Fields to match tasks (added for parity)
+ company_id TEXT REFERENCES companies(id),
+ fiscal_period TEXT NOT NULL DEFAULT '',
+ scope TEXT NOT NULL DEFAULT '',
+ priority TEXT NOT NULL DEFAULT 'NORMAL',
+ weight INTEGER NOT NULL DEFAULT 1,
+ due_date TEXT,
+ progress INTEGER NOT NULL DEFAULT 0,
+ updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS audit_events(
  id TEXT PRIMARY KEY, actor_id TEXT REFERENCES users(id), action TEXT NOT NULL,
@@ -369,6 +378,15 @@ def init_db() -> None:
             ("perf_submissions", "manager_id", "TEXT"),
             ("perf_submissions", "decision_at", "TEXT"),
             ("perf_submissions", "decision_note", "TEXT NOT NULL DEFAULT ''"),
+            # Add task-parity fields to performance_entries (existing DBs)
+            ("performance_entries", "company_id", "TEXT REFERENCES companies(id)"),
+            ("performance_entries", "fiscal_period", "TEXT NOT NULL DEFAULT ''"),
+            ("performance_entries", "scope", "TEXT NOT NULL DEFAULT ''"),
+            ("performance_entries", "priority", "TEXT NOT NULL DEFAULT 'NORMAL'"),
+            ("performance_entries", "weight", "INTEGER NOT NULL DEFAULT 1"),
+            ("performance_entries", "due_date", "TEXT"),
+            ("performance_entries", "progress", "INTEGER NOT NULL DEFAULT 0"),
+            ("performance_entries", "updated_at", "TEXT"),
         ):
             columns = {r["name"] for r in con.execute(f"PRAGMA table_info({table})")}
             if column not in columns:
@@ -376,6 +394,12 @@ def init_db() -> None:
                     con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
                 except Exception:
                     pass  # column might already exist or table doesn't exist yet
+
+        # Backfill updated_at for old performance entries that don't have it
+        try:
+            con.execute("UPDATE performance_entries SET updated_at=created_at WHERE updated_at IS NULL OR updated_at=''")
+        except Exception:
+            pass
 
 
 init_db()
@@ -986,6 +1010,14 @@ class PerformanceEntryModel(BaseModel):
     title: str = Field(min_length=2, max_length=120)
     description: str = Field(default="", max_length=2000)
     duration_minutes: int = Field(ge=1, le=1440)
+    # Task-parity fields
+    company_id: str = Field(default="", max_length=64)
+    fiscal_period: str = Field(default="", max_length=40)
+    scope: str = Field(default="", max_length=500)
+    priority: str = Field(default="NORMAL", max_length=20)
+    weight: int = Field(default=1, ge=1, le=3)
+    due_date: str = Field(default="", max_length=12)
+    progress: int = Field(default=0, ge=0, le=100)
 
 
 class PerformanceReviewModel(BaseModel):
@@ -1726,9 +1758,11 @@ def clean_work_date(value: str) -> str:
 def list_performance_entries(request: Request):
     user = current_user(request)
     with db() as con:
-        query = """SELECT p.*,u.name AS user_name,r.name AS reviewer_name
+        query = """SELECT p.*,u.name AS user_name,r.name AS reviewer_name,
+                   c.name AS company_name
                    FROM performance_entries p JOIN users u ON u.id=p.user_id
-                   LEFT JOIN users r ON r.id=p.reviewer_id"""
+                   LEFT JOIN users r ON r.id=p.reviewer_id
+                   LEFT JOIN companies c ON c.id=p.company_id"""
         args: tuple[Any, ...] = ()
         if user["role"] not in ("ADMIN", "CEO"):
             query += " WHERE p.user_id=?"
@@ -1743,13 +1777,20 @@ def create_performance_entry(payload: PerformanceEntryModel, request: Request):
     if payload.category not in PERFORMANCE_CATEGORIES:
         raise HTTPException(400, "نوع عملکرد معتبر نیست")
     work_date = clean_work_date(payload.work_date)
+    due_date = normalize_date_input(payload.due_date) or None
     entry_id, created = uid(), now()
     with db() as con:
         con.execute("""INSERT INTO performance_entries
-            (id,user_id,work_date,category,title,description,duration_minutes,status,created_at)
-            VALUES(?,?,?,?,?,?,?,'PENDING',?)""",
-            (entry_id,user["id"],work_date,payload.category,payload.title.strip(),payload.description.strip(),payload.duration_minutes,created))
-        audit(con,user["id"],"PERFORMANCE_ENTRY_CREATE","performance_entry",entry_id,{"category":payload.category,"duration_minutes":payload.duration_minutes})
+            (id,user_id,work_date,category,title,description,duration_minutes,status,created_at,
+             company_id,fiscal_period,scope,priority,weight,due_date,progress,updated_at)
+            VALUES(?,?,?,?,?,?,?,'PENDING',?,?,?,?,?,?,?,?,?)""",
+            (entry_id,user["id"],work_date,payload.category,payload.title.strip(),payload.description.strip(),
+             payload.duration_minutes,created,
+             payload.company_id or None, payload.fiscal_period, payload.scope,
+             payload.priority, payload.weight, due_date, payload.progress, created))
+        audit(con,user["id"],"PERFORMANCE_ENTRY_CREATE","performance_entry",entry_id,
+              {"category":payload.category,"duration_minutes":payload.duration_minutes,
+               "priority":payload.priority,"weight":payload.weight})
     return {"id": entry_id, "status": "PENDING"}
 
 
@@ -1759,6 +1800,7 @@ def update_performance_entry(entry_id: str, payload: PerformanceEntryModel, requ
     if payload.category not in PERFORMANCE_CATEGORIES:
         raise HTTPException(400, "نوع عملکرد معتبر نیست")
     work_date = clean_work_date(payload.work_date)
+    due_date = normalize_date_input(payload.due_date) or None
     with db() as con:
         entry = con.execute("SELECT * FROM performance_entries WHERE id=?", (entry_id,)).fetchone()
         if entry is None:
@@ -1768,9 +1810,13 @@ def update_performance_entry(entry_id: str, payload: PerformanceEntryModel, requ
         if entry["status"] == "APPROVED":
             raise HTTPException(409, "گزارش تأییدشده قابل ویرایش نیست")
         con.execute("""UPDATE performance_entries SET work_date=?,category=?,title=?,description=?,
-            duration_minutes=?,status='PENDING',review_note='',reviewer_id=NULL,reviewed_at=NULL WHERE id=?""",
-            (work_date,payload.category,payload.title.strip(),payload.description.strip(),payload.duration_minutes,entry_id))
-        audit(con,user["id"],"PERFORMANCE_ENTRY_UPDATE","performance_entry",entry_id,{"category":payload.category,"duration_minutes":payload.duration_minutes})
+            duration_minutes=?,status='PENDING',review_note='',reviewer_id=NULL,reviewed_at=NULL,
+            company_id=?,fiscal_period=?,scope=?,priority=?,weight=?,due_date=?,progress=?,updated_at=? WHERE id=?""",
+            (work_date,payload.category,payload.title.strip(),payload.description.strip(),payload.duration_minutes,
+             payload.company_id or None, payload.fiscal_period, payload.scope,
+             payload.priority, payload.weight, due_date, payload.progress, now(), entry_id))
+        audit(con,user["id"],"PERFORMANCE_ENTRY_UPDATE","performance_entry",entry_id,
+              {"category":payload.category,"duration_minutes":payload.duration_minutes})
     return {"id": entry_id, "status": "PENDING"}
 
 
