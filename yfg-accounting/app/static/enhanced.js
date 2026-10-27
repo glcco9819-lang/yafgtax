@@ -1097,32 +1097,151 @@
     }
   }
 
-  // شرکت‌ها (Companies — reuses existing data, displayed in customers context)
+  // شرکت‌ها (Companies — full management inside Customers tab)
   async function renderCompaniesListForCustomers(content, isAdmin) {
+    if (!content) return;
+    const canManage = isAdmin && (state.me?.permissions?.['companies.manage'] ?? (state.me?.role === 'ADMIN' || state.me?.role === 'CEO'));
     const companies = await api('/companies').catch(()=>[]);
+    const rows = companies.map(c => `
+      <tr>
+        <td><code><strong>${esc(c.code)}</strong></code></td>
+        <td><strong>${esc(c.kind==='REAL' ? `${c.first_name} ${c.last_name}`.trim() || c.name : c.name)}</strong></td>
+        <td>${c.kind==='REAL'?'<span class="tag" style="background:#fef3c7;color:#92400e;">حقیقی</span>':'<span class="tag" style="background:#dbeafe;color:#1e40af;">حقوقی</span>'}</td>
+        <td style="font-size:12px;">${esc(c.national_id || '—')}</td>
+        <td style="font-size:12px;">${esc(c.manager_name || '—')}${c.manager_phone ? `<div style="font-size:11px;color:#64748b;">${esc(c.manager_phone)}</div>` : ''}</td>
+        <td style="font-size:12px;">${esc(c.phone || '—')}</td>
+        <td>${c.active?'<span style="color:#10b981;">● فعال</span>':'<span style="color:#94a3b8;">○ غیرفعال</span>'}</td>
+        <td style="display:flex;gap:4px;flex-wrap:wrap;">
+          ${canManage ? `<button class="btn soft small" onclick="window.__custCompanyForm('${c.id}')">✎ ویرایش</button>` : ''}
+          ${canManage ? (c.active
+            ? `<button class="btn small" style="background:#fee2e2;color:#991b1b;" onclick="window.__custToggleCompany('${c.id}',false)">✗ غیرفعال</button>`
+            : `<button class="btn small" style="background:#d1fae5;color:#065f46;" onclick="window.__custToggleCompany('${c.id}',true)">✓ فعال</button>`) : ''}
+          <button class="btn small" style="background:#e0f2fe;color:#0369a1;" onclick="window.__custCompanyDetails('${c.id}')">👁 جزئیات</button>
+          ${!canManage ? '<span style="color:#94a3b8;font-size:11px;">فقط مشاهده</span>' : ''}
+        </td>
+      </tr>`).join('');
     content.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-        <div><h3 style="margin:0;">🏢 شرکت‌های مشتری</h3><p class="hint" style="margin-top:2px;">فهرست شرکت‌های حقوقی — مدیریت کامل از تب «تنظیمات → تعریف شرکت».</p></div>
+        <div><h3 style="margin:0;">🏢 شرکت‌های مشتری (${companies.length})</h3><p class="hint" style="margin-top:2px;">فهرست شرکت‌های حقوقی و حقیقی — دکمه «شرکت جدید» برای افزودن مستقیم.</p></div>
+        ${canManage ? '<button class="btn primary small" onclick="window.__custCompanyForm()">＋ شرکت جدید</button>' : ''}
       </div>
       <div class="table-card" style="overflow-x:auto;">
         <table class="data-table">
-          <thead><tr><th>کد</th><th>نام</th><th>نوع</th><th>شناسه ملی</th><th>مدیر</th><th>تلفن</th><th>وضعیت</th></tr></thead>
+          <thead><tr><th>کد</th><th>نام</th><th>نوع</th><th>شناسه ملی</th><th>مدیر</th><th>تلفن</th><th>وضعیت</th><th>عملیات</th></tr></thead>
           <tbody>
-            ${companies.length ? companies.map(c => `
-              <tr>
-                <td><code>${esc(c.code)}</code></td>
-                <td><b>${esc(c.kind==='REAL' ? `${c.first_name} ${c.last_name}` : c.name)}</b></td>
-                <td>${c.kind==='REAL'?'<span class="tag" style="background:#fef3c7;color:#92400e;">حقیقی</span>':'<span class="tag" style="background:#dbeafe;color:#1e40af;">حقوقی</span>'}</td>
-                <td>${esc(c.national_id || '—')}</td>
-                <td>${esc(c.manager_name || '—')}</td>
-                <td>${esc(c.phone || c.manager_phone || '—')}</td>
-                <td>${c.active?'<span style="color:#10b981;">● فعال</span>':'<span style="color:#94a3b8;">○ غیرفعال</span>'}</td>
-              </tr>`).join('') : `<tr><td colspan="7" style="text-align:center;padding:20px;color:#64748b;">شرکتی ثبت نشده</td></tr>`}
+            ${rows || `<tr><td colspan="8" style="text-align:center;padding:20px;color:#64748b;">شرکتی ثبت نشده — با دکمه «شرکت جدید» شروع کنید.</td></tr>`}
           </tbody>
         </table>
-      </div>
-      <p class="hint" style="margin-top:12px;">برای افزودن یا ویرایش شرکت، به <b>تنظیمات → تعریف شرکت</b> مراجعه کنید. تب «مشتریان» برای مشاهده فهرست در کنار اشخاص است.</p>`;
+      </div>`;
+
+    // Customer-context toggle company active/inactive
+    window.__custToggleCompany = async (id, active) => {
+      try {
+        await api(`/companies/${id}`, { method:'PATCH', body: JSON.stringify({ active }) });
+        toast(active ? 'شرکت فعال شد' : 'شرکت غیرفعال شد');
+        renderCustomers();
+      } catch(e) { toast(e.message, true); }
+    };
+
+    // Customer-context company details
+    window.__custCompanyDetails = async (id) => {
+      try {
+        const c = (await api('/companies')).find(x => x.id === id);
+        if (!c) return toast('شرکت پیدا نشد', true);
+        const item = (label, val) => `<div style="display:flex;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #f1f5f9;font-size:13px;"><span style="color:#64748b;">${label}</span><b>${esc(val) || '—'}</b></div>`;
+        const body = `<div style="border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;">
+          ${item('نوع', c.kind==='REAL' ? 'حقیقی' : 'حقوقی')}
+          ${item('کد', c.code)}
+          ${c.kind === 'LEGAL' ? item('نام شرکت', c.name) : item('نام', `${c.first_name} ${c.last_name}`)}
+          ${item('شناسه ملی', c.national_id)}
+          ${item('تماس', c.phone)}
+          ${item('کد پستی', c.postal_code)}
+          ${item('آدرس', c.address)}
+          ${item('نام مدیر', c.manager_name)}
+          ${item('تماس مدیر', c.manager_phone)}
+        </div>`;
+        modal(`جزئیات ${esc(c.name)}`, 'مشخصات کامل شرکت', body);
+      } catch(e) { toast(e.message, true); }
+    };
+
+    // Customer-context company form (new/edit) — uses same rich modal as Settings,
+    // but after submit, re-renders the Customers tab instead of the Settings tab.
+    window.__custCompanyForm = (id) => {
+      (async () => {
+        let c = null;
+        if (id) c = (await api('/companies')).find(x => x.id === id);
+        const kind = c?.kind || 'LEGAL';
+        const field = (label, name, val, opts={}) => `<label>${label}${opts.required?' <span style="color:#ef4444;">*</span>':''}<input class="field" name="${name}" ${opts.required?'required':''} value="${esc(val ?? '')}" placeholder="${opts.placeholder||''}"></label>`;
+        const body = `
+        <form id="custCompanyForm" style="display:grid;gap:12px;">
+          <div style="display:flex;gap:8px;">
+            <label class="check-row" style="flex:1;padding:10px;border:2px solid ${kind === 'LEGAL' ? '#0b8f89' : '#cbd5e1'};border-radius:10px;cursor:pointer;">
+              <input type="radio" name="kind" value="LEGAL" ${kind === 'LEGAL' ? 'checked' : ''}> 🏢 شخص حقوقی (شرکت)</label>
+            <label class="check-row" style="flex:1;padding:10px;border:2px solid ${kind === 'REAL' ? '#0b8f89' : '#cbd5e1'};border-radius:10px;cursor:pointer;">
+              <input type="radio" name="kind" value="REAL" ${kind === 'REAL' ? 'checked' : ''}> 👤 شخص حقیقی</label>
+          </div>
+          <div id="custLegalRow" style="display:grid;gap:12px;">
+            ${field('نام شرکت *', 'name', c?.name, { required: true, placeholder: 'مثلاً: شرکت بازرگانی پارس' })}
+          </div>
+          <div id="custRealRow" class="form-grid" style="display:none;">
+            ${field('نام *', 'first_name', c?.first_name, { required: true })}
+            ${field('نام خانوادگی *', 'last_name', c?.last_name, { required: true })}
+          </div>
+          <div class="form-grid">
+            ${field('کد شرکت *', 'code', c?.code, { required: true, placeholder: 'کد یکتا — مثلاً 1001' })}
+            ${field('شناسه ملی / کد ملی', 'national_id', c?.national_id, { placeholder: '۱۱ رقمی برای حقوقی / ۱۰ رقمی برای حقیقی' })}
+          </div>
+          <div class="form-grid">
+            ${field('تماس', 'phone', c?.phone, { placeholder: '021-12345678' })}
+            ${field('کد پستی', 'postal_code', c?.postal_code, { placeholder: '۱۰ رقمی' })}
+          </div>
+          ${field('آدرس', 'address', c?.address, { placeholder: 'آدرس کامل دفتر/شرکت' })}
+          <div class="form-grid">
+            ${field('نام مدیر', 'manager_name', c?.manager_name)}
+            ${field('تماس مدیر', 'manager_phone', c?.manager_phone)}
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px;">
+            <button type="button" class="btn soft" onclick="document.getElementById('modalRoot').innerHTML=''">انصراف</button>
+            <button type="submit" class="btn primary">${id ? 'ذخیره تغییرات' : 'ثبت شرکت'}</button>
+          </div>
+        </form>`;
+        modal(id ? '✎ ویرایش شرکت' : '＋ شرکت جدید', 'نوع شخص (حقیقی/حقوقی) فیلدهای نام را تعیین می‌کند. کد پس از ثبت قابل تغییر نیست.', body);
+        const form = document.getElementById('custCompanyForm');
+        const syncKind = () => {
+          const k = form.querySelector('[name=kind]:checked')?.value;
+          const legalRow = document.getElementById('custLegalRow');
+          const realRow = document.getElementById('custRealRow');
+          legalRow.style.display = k === 'LEGAL' ? 'grid' : 'none';
+          realRow.style.display = k === 'REAL' ? 'grid' : 'none';
+          // Toggle required-ness on the kind-specific name fields so HTML5 validation doesn't block submit when one row is hidden
+          const legalName = legalRow.querySelector('[name=name]');
+          const realFirst = realRow.querySelector('[name=first_name]');
+          const realLast = realRow.querySelector('[name=last_name]');
+          if (legalName) legalName.required = (k === 'LEGAL');
+          if (realFirst) realFirst.required = (k === 'REAL');
+          if (realLast) realLast.required = (k === 'REAL');
+        };
+        form.querySelectorAll('[name=kind]').forEach(r => r.addEventListener('change', syncKind));
+        syncKind();
+        form.addEventListener('submit', async e => {
+          e.preventDefault();
+          const fd = new FormData(form);
+          const payload = Object.fromEntries(fd.entries());
+          if (payload.kind === 'REAL' && !payload.name) {
+            payload.name = `${payload.first_name || ''} ${payload.last_name || ''}`.trim();
+          }
+          try {
+            if (id) await api(`/companies/${id}`, { method:'PATCH', body: JSON.stringify(payload) });
+            else await api('/companies', { method:'POST', body: JSON.stringify(payload) });
+            document.getElementById('modalRoot').innerHTML = '';
+            toast(id ? 'شرکت ویرایش شد' : 'شرکت ثبت شد');
+            renderCustomers();
+          } catch(err) { toast(err.message, true); }
+        });
+      })();
+    };
   }
+
 
   // ============ REPORTS HUB (تب گزارشات) ============
   // همه گزارش‌های مدیریتی: عملکرد تیم، عملکرد کارکنان، ممیزی و KPI
@@ -1717,8 +1836,17 @@ function __companyForm(id) {
     const form = document.getElementById('companyForm2');
     const syncKind = () => {
       const k = form.querySelector('[name=kind]:checked')?.value;
-      document.getElementById('legalNameRow').style.display = k === 'LEGAL' ? 'grid' : 'none';
-      document.getElementById('realNameRow').style.display = k === 'REAL' ? 'grid' : 'none';
+      const legalRow = document.getElementById('legalNameRow');
+      const realRow = document.getElementById('realNameRow');
+      legalRow.style.display = k === 'LEGAL' ? 'grid' : 'none';
+      realRow.style.display = k === 'REAL' ? 'grid' : 'none';
+      // Toggle required-ness on the kind-specific name fields so HTML5 validation doesn't block submit when one row is hidden
+      const legalName = legalRow.querySelector('[name=name]');
+      const realFirst = realRow.querySelector('[name=first_name]');
+      const realLast = realRow.querySelector('[name=last_name]');
+      if (legalName) legalName.required = (k === 'LEGAL');
+      if (realFirst) realFirst.required = (k === 'REAL');
+      if (realLast) realLast.required = (k === 'REAL');
     };
     form.querySelectorAll('[name=kind]').forEach(r => r.addEventListener('change', syncKind));
     syncKind();
