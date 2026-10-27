@@ -20,7 +20,7 @@ function showApp(){
  $('#authView').classList.add('hidden');$('#appView').classList.remove('hidden');
  $('#userName').textContent=state.me.name;$('#userRole').textContent=labels[state.me.role];$('#avatar').textContent=state.me.name.trim().slice(0,1);
  $$('.admin-only').forEach(e=>e.classList.toggle('hidden',!['ADMIN','CEO'].includes(state.me.role)));
- if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js?v=16',{updateViaCache:'none'}).catch(()=>{});
+ if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js?v=17',{updateViaCache:'none'}).catch(()=>{});
  loadAll();
 }
 async function loadAll(){try{state.companies=await api('/companies');state.tasks=await api('/tasks');if(['ADMIN','CEO'].includes(state.me.role))state.users=await api('/users');await renderView(state.view);const n=await api('/notifications');$('#notifyDot').classList.toggle('hidden',!n.some(x=>!x.read_at));}catch(e){toast(e.message,true)}}
@@ -40,7 +40,24 @@ function renderTasks(){const isManager=['ADMIN','CEO'].includes(state.me.role);c
 function fillTaskRows(){const q=($('#taskSearch')?.value||'').toLowerCase(),f=$('#taskStatus')?.value||'';const list=state.tasks.filter(t=>(!f||t.status===f)&&(`${t.title} ${t.company_name} ${t.assignee_name}`.toLowerCase().includes(q)));$('#taskRows').innerHTML=list.length?list.map(t=>`<tr><td><b>${esc(t.title)}</b><div class="task-sub">${esc(t.fiscal_period||'بدون دوره')} · وزن ${num(t.weight)}</div></td><td>${esc(t.company_name)}<div class="task-sub">${esc(t.company_code)}</div></td><td>${esc(t.assignee_name)}</td><td>${dateFmt(t.due_date)}</td><td><div class="progress-wrap"><div class="progress"><span style="width:${Math.max(0,Math.min(100,t.progress))}%"></span></div><span class="progress-num">${num(t.progress)}٪</span></div></td><td>${statusTag(t.status)}</td><td><button class="btn soft small" data-action="task-detail" data-id="${esc(t.id)}">جزئیات</button></td></tr>`).join(''):`<tr><td colspan="7">${empty()}</td></tr>`}
 async function renderCompanies(){const isAdmin=state.me.role==='ADMIN';const action=isAdmin?`<button class="btn primary" data-action="new-company">＋ شرکت جدید</button>`:'';$('#view-companies').innerHTML=head('شرکت‌ها','فهرست مشتریان، دوره مالی و نسخه‌های مرجع Excel.',action)+`<div class="company-grid">${state.companies.length?state.companies.map(c=>`<article class="company-card"><div class="company-code">${esc(c.code)}</div><h3>${esc(c.name)}</h3><p>${c.active?'فعال':'غیرفعال'}</p><div class="company-actions"><button class="btn soft small" data-action="upload-reference" data-id="${esc(c.id)}">＋ بارگذاری مرجع</button><button class="btn ghost small" data-action="company-info" data-id="${esc(c.id)}">دوره و راهنما</button></div></article>`).join(''):empty('شرکتی ثبت نشده است','ابتدا شرکت‌های دفتر را اضافه کنید.')}</div>`}
 function renderUsers(){const rows=state.users||[];$('#view-users').innerHTML=head('کاربران و دسترسی‌ها','برای هر کارمند حساب مستقل و دسترسی شرکت مشخص کنید.',`<button class="btn primary" data-action="new-user">＋ کاربر جدید</button>`)+`<div class="table-card"><table class="data-table"><thead><tr><th>نام</th><th>نام کاربری</th><th>نقش</th><th>وضعیت</th><th>ایجاد حساب</th></tr></thead><tbody>${rows.length?rows.map(u=>`<tr><td><b>${esc(u.name)}</b></td><td>${esc(u.username)}</td><td>${labels[u.role]}</td><td>${u.active?'فعال':'غیرفعال'}</td><td>${dateFmt(u.created_at)}</td></tr>`).join(''):`<tr><td colspan="5">${empty()}</td></tr>`}</tbody></table></div><p class="hint" style="margin-top:12px">دسترسی شرکت در زمان ساخت کاربر تنظیم می‌شود؛ کارکنان فقط تسک‌های شرکت‌های مجاز خود را می‌بینند.</p>`}
-async function renderRequests(){const requests=await api('/requests'),manager=['ADMIN','CEO'].includes(state.me.role);$('#view-requests').innerHTML=head('درخواست‌ها','ثبت و پیگیری مرخصی و درخواست‌های عمومی.',`<button class="btn primary" data-action="new-request">＋ درخواست جدید</button>`)+`<div class="table-card"><table class="data-table"><thead><tr><th>درخواست‌دهنده</th><th>نوع</th><th>شرح</th><th>بازه</th><th>ثبت</th><th>وضعیت</th><th></th></tr></thead><tbody>${requests.length?requests.map(r=>`<tr><td>${esc(r.user_name)}</td><td>${labels[r.kind]||esc(r.kind)}</td><td>${esc(r.body)}</td><td>${r.start_date?`${esc(r.start_date)} تا ${esc(r.end_date)}`:'—'}</td><td>${timeFmt(r.created_at)}</td><td>${statusTag(r.status)}</td><td>${manager&&r.status==='PENDING'?`<div class="table-actions"><button data-action="review-request" data-id="${r.id}" data-status="APPROVED">تأیید</button><button data-action="review-request" data-id="${r.id}" data-status="REJECTED">رد</button></div>`:esc(r.review_note||'')}</td></tr>`).join(''):`<tr><td colspan="7">${empty('درخواستی ثبت نشده است')}</td></tr>`}</tbody></table></div>`}
+async function renderRequests(){
+  const requests=await api('/requests'),manager=['ADMIN','CEO'].includes(state.me.role);
+  // Try to load request types for display names
+  let rtMap={};
+  try{const rts=await api('/request-types');(rts||[]).forEach(rt=>rtMap[rt.id]=rt);}catch(e){}
+  $('#view-requests').innerHTML=head('درخواست‌ها','ثبت و پیگیری مرخصی و درخواست‌های عمومی.',`<button class="btn primary" data-action="new-request">＋ درخواست جدید</button>`)+`<div class="table-card"><table class="data-table"><thead><tr><th>درخواست‌دهنده</th><th>نوع</th><th>خلاصه</th><th>بازه</th><th>ثبت</th><th>وضعیت</th><th></th></tr></thead><tbody>${requests.length?requests.map(r=>{
+    const rt=rtMap[r.request_type_id];
+    const typeLabel=rt?`${rt.icon||''} ${esc(rt.name)}`:(labels[r.kind]||esc(r.kind));
+    let summary=esc(r.body||'');
+    if(rt&&r.data_json){
+      try{const d=JSON.parse(r.data_json||'{}');
+        const parts=[];
+        for(const f of rt.fields||[]){if(d[f.name]&&f.type!=='duration')parts.push(`${esc(f.label)}: ${esc(String(d[f.name]).slice(0,30))}`);}
+        if(parts.length)summary=parts.join(' • ');
+      }catch(e){}
+    }
+    return `<tr><td>${esc(r.user_name)}</td><td>${typeLabel}</td><td style="font-size:12px;">${summary}</td><td style="font-size:11px;">${r.start_date?`${esc(r.start_date)} تا ${esc(r.end_date)}`:'—'}</td><td>${timeFmt(r.created_at)}</td><td>${statusTag(r.status)}</td><td>${manager&&r.status==='PENDING'?`<div class="table-actions"><button data-action="review-request" data-id="${r.id}" data-status="APPROVED">تأیید</button><button data-action="review-request" data-id="${r.id}" data-status="REJECTED">رد</button></div>`:esc(r.review_note||'')}</td></tr>`;
+  }).join(''):`<tr><td colspan="7">${empty('درخواستی ثبت نشده است')}</td></tr>`}</tbody></table></div>`}
 async function renderAttendance(){const rows=await api('/attendance');const today=new Intl.DateTimeFormat('fa-IR-u-ca-persian',{weekday:'long',year:'numeric',month:'long',day:'numeric'}).format(new Date());$('#view-attendance').innerHTML=head('کارکرد','ثبت زمان ورود و خروج و مشاهدهٔ سوابق.', '')+`<div class="dashboard-grid"><div class="panel attendance-clock"><p class="eyebrow">امروز در دفتر</p><div id="clock" class="clock-time">--:--:--</div><div class="clock-date">${today}</div><div class="toolbar" style="justify-content:center"><button class="btn primary" data-action="attendance" data-kind="in">ثبت ورود</button><button class="btn soft" data-action="attendance" data-kind="out">ثبت خروج</button></div></div><div class="panel"><div class="panel-head"><div><h3>راهنمای ثبت</h3><p>زمان‌ها بر اساس ساعت سرور ثبت می‌شوند.</p></div></div><div class="alert success">ثبت حضور برای هر کاربر یک‌بار در روز انجام می‌شود. برای اصلاح سابقه با مدیر سامانه هماهنگ کنید.</div></div></div><div class="panel" style="margin-top:16px"><div class="panel-head"><h3>سوابق اخیر</h3></div><div class="table-card"><table class="data-table"><thead><tr><th>تاریخ</th>${['ADMIN','CEO'].includes(state.me.role)?'<th>کارمند</th>':''}<th>ورود</th><th>خروج</th></tr></thead><tbody>${rows.length?rows.map(r=>`<tr><td>${dateFmt(r.work_date)}</td>${r.user_name?`<td>${esc(r.user_name)}</td>`:''}<td>${timeFmt(r.check_in)}</td><td>${timeFmt(r.check_out)}</td></tr>`).join(''):`<tr><td colspan="4">${empty('سابقه‌ای وجود ندارد')}</td></tr>`}</tbody></table></div></div>`;const tick=()=>{const e=$('#clock');if(e)e.textContent=new Intl.DateTimeFormat('fa-IR',{hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(new Date())};tick();clearInterval(renderAttendance.timer);renderAttendance.timer=setInterval(tick,1000)}
 async function renderPerformance(){const rows=await api('/performance');$('#view-performance').innerHTML=head('عملکرد تیم','گزارش نمره‌های ثبت‌شده همراه با حجم کار و تأخیر.','')+`<div class="panel"><div class="panel-head"><div><h3>خلاصهٔ دوره</h3><p>میانگین‌ها فقط از تسک‌های دارای نمره محاسبه شده‌اند.</p></div><span class="tag">نمره‌ها تصمیم خودکار نیستند</span></div><div class="score-card header"><span>کارمند</span><span>تسک</span><span>تکمیل</span><span>عقب‌افتاده</span><span>میانگین ساده / وزنی</span></div>${rows.length?rows.map(r=>`<div class="score-card"><b>${esc(r.name)}</b><span>${num(r.total)}</span><span>${num(r.completed)}</span><span>${num(r.late)}</span><span class="score">${r.simple_score??'—'} <small style="font-size:9px;color:#819196">/ ${r.weighted_score??'—'}</small></span></div>`).join(''):empty('کارمندی ثبت نشده است')}</div><p class="hint" style="margin-top:12px">گزارش فعلی بر اساس نمره‌های واردشده در تصمیم مدیر است. نمرهٔ عملکرد خودکار از تعداد اختلاف‌های Excel ساخته نمی‌شود.</p>`}
 async function renderAudit(){const rows=await api('/audit');$('#view-audit').innerHTML=head('گزارش ممیزی','ردیابی تغییرات حساس و عملیات کاربران.','')+`<div class="table-card"><table class="data-table"><thead><tr><th>زمان</th><th>کاربر</th><th>عملیات</th><th>نوع رکورد</th><th>شناسه</th><th>جزئیات</th></tr></thead><tbody>${rows.length?rows.map(r=>`<tr><td>${timeFmt(r.created_at)}</td><td>${esc(r.actor_name||'سیستم')}</td><td><span class="tag">${esc(r.action)}</span></td><td>${esc(r.entity_type)}</td><td class="task-sub">${esc(r.entity_id||'—')}</td><td>${esc(JSON.stringify(r.details))}</td></tr>`).join(''):`<tr><td colspan="6">${empty()}</td></tr>`}</tbody></table></div>`}
@@ -60,7 +77,143 @@ function openNewCompany(){const m=modal('ثبت شرکت','برای تفکیک �
 function openNewUser(){const companyChecks=state.companies.map(c=>`<label class="check-row"><input type="checkbox" name="company_ids" value="${esc(c.id)}"> ${esc(c.name)}</label>`).join('');const m=modal('افزودن کارمند','حساب جداگانه و دسترسی محدود به شرکت‌های مربوطه.',`<form id="newUserForm" class="stack"><div class="form-grid"><label>نام کامل<input class="field" name="name" required minlength="2"></label><label>نام کاربری<input class="field" name="username" required minlength="3"></label><label>گذرواژهٔ موقت<input class="field" type="password" name="password" required minlength="4"></label><label>نقش<select name="role"><option value="EMPLOYEE">کارمند</option><option value="CEO">مدیرعامل</option></select></label><div class="wide-field"><p class="section-title">دسترسی به شرکت‌ها</p><div class="stack">${companyChecks||'<span class="hint">ابتدا شرکت بسازید.</span>'}</div></div></div><p class="hint">گذرواژه حداقل ۴ نویسه است. برای هر کاربر نام کاربری مستقل بسازید.</p><button class="btn primary">ایجاد کاربر</button></form>`);$('#newUserForm',m).addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.currentTarget),v={name:f.get('name'),username:f.get('username'),password:f.get('password'),role:f.get('role'),company_ids:f.getAll('company_ids')};try{await api('/users',json('POST',v));$('#modalRoot').innerHTML='';toast('حساب کارمند ساخته شد');await loadAll()}catch(err){toast(err.message,true)}})}
 function uploadReference(companyId){const c=state.companies.find(x=>x.id===companyId);const m=modal('بارگذاری نسخهٔ مرجع',`${c?.name||''} · فایل مرجع فقط خوانده می‌شود و نسخه قبلی حفظ خواهد شد.`, `<form id="referenceForm" class="stack"><label>دورهٔ مالی<input class="field" name="fiscal_period" required placeholder="مثلاً ۱۴۰۵/۰۷"></label><div class="form-grid"><label>پوشش از تاریخ<input class="field" name="coverage_start" placeholder="۱۴۰۵/۰۷/۰۱"></label><label>تا تاریخ<input class="field" name="coverage_end" placeholder="۱۴۰۵/۰۷/۳۰"></label></div><label class="file-drop">فایل Excel مرجع<input name="file" type="file" accept=".xlsx" required></label><p class="hint">هر بار بارگذاری یک نسخهٔ جدید ایجاد می‌کند؛ نتیجه‌های قبلی تغییر نمی‌کنند.</p><button class="btn primary">ذخیره نسخه مرجع</button></form>`);$('#referenceForm',m).addEventListener('submit',async e=>{e.preventDefault();try{await api(`/companies/${companyId}/reference`,{method:'POST',body:new FormData(e.currentTarget)});$('#modalRoot').innerHTML='';toast('نسخه مرجع ذخیره شد');}catch(err){toast(err.message,true)}})}
 async function companyInfo(companyId){const c=state.companies.find(x=>x.id===companyId),refs=await api(`/companies/${companyId}/references`);modal(`مرجع‌های ${c?.name||'شرکت'}`,'نسخه‌ها جایگزین یکدیگر نمی‌شوند و به دوره مالی وابسته‌اند.',refs.length?`<div class="table-card"><table class="data-table"><thead><tr><th>دوره</th><th>نسخه</th><th>ردیف</th><th>پوشش</th><th>بارگذاری</th><th></th></tr></thead><tbody>${refs.map(r=>`<tr><td>${esc(r.fiscal_period)}</td><td>v${num(r.version)}</td><td>${num(r.row_count)}</td><td>${esc(r.coverage_start||'—')} تا ${esc(r.coverage_end||'—')}</td><td>${timeFmt(r.created_at)}</td><td><a class="text-link" href="/api/files/${esc((r.stored_name||''))}">دانلود</a></td></tr>`).join('')}</tbody></table></div>`:empty('مرجعی ثبت نشده است','برای بارگذاری مرجع از دکمهٔ بالای کارت شرکت استفاده کنید.'),{wide:true})}
-function openNewRequest(){const m=modal('ثبت درخواست','درخواست مرخصی یا درخواست عمومی برای مدیر.',`<form id="requestForm" class="stack"><label>نوع درخواست<select name="kind" id="requestKind"><option value="GENERAL">درخواست عمومی</option><option value="LEAVE">مرخصی</option></select></label><div id="leaveDates" class="form-grid hidden"><label>از تاریخ (شمسی)<input class="field" name="start_date" placeholder="۱۴۰۵/۰۷/۲۵"></label><label>تا تاریخ (شمسی)<input class="field" name="end_date" placeholder="۱۴۰۵/۰۷/۲۷"></label></div><label>شرح<textarea name="body" required minlength="2" placeholder="شرح درخواست"></textarea></label><button class="btn primary">ارسال برای مدیر</button></form>`);$('#requestKind',m).addEventListener('change',e=>$('#leaveDates',m).classList.toggle('hidden',e.target.value!=='LEAVE'));$('#requestForm',m).addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.currentTarget),v=Object.fromEntries(f);try{await api('/requests',json('POST',v));$('#modalRoot').innerHTML='';toast('درخواست ارسال شد');await renderRequests()}catch(err){toast(err.message,true)}})}
+function openNewRequest(){
+  // First fetch request types to render dynamic form
+  api('/request-types').then(types=>{
+    types=(types||[]).filter(t=>t.active);
+    openRequestFormDynamic(types);
+  }).catch(e=>{
+    // Fallback to simple form
+    const m=modal('ثبت درخواست','درخواست عمومی برای مدیر.',`<form id="requestForm" class="stack"><label>شرح<textarea name="body" required minlength="2" placeholder="شرح درخواست"></textarea></label><button class="btn primary">ارسال</button></form>`);
+    $('#requestForm',m).addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.currentTarget),v=Object.fromEntries(f);try{await api('/requests',json('POST',v));$('#modalRoot').innerHTML='';toast('درخواست ارسال شد');await renderRequests()}catch(err){toast(err.message,true)}});
+  });
+}
+
+function openRequestFormDynamic(types){
+  const typeOptions=types.map(t=>`<option value="${t.id}">${t.icon||''} ${esc(t.name)}</option>`).join('');
+  const usersForLink=(state.users||[]).map(u=>`<option value="${u.id}">${esc(u.name)}</option>`).join('');
+  const body=`
+    <form id="requestForm" class="stack">
+      <label>نوع درخواست
+        <select name="request_type_id" id="requestTypeId">
+          <option value="">— انتخاب کنید —</option>
+          ${typeOptions}
+        </select>
+      </label>
+      <div id="dynamicFields" style="display:grid;gap:10px;">
+        <p class="hint" style="text-align:center;color:#94a3b8;padding:14px 0;">ابتدا نوع درخواست را انتخاب کنید</p>
+      </div>
+      <button class="btn primary" type="submit">ارسال درخواست</button>
+    </form>`;
+  const m=modal('ثبت درخواست','نوع درخواست را انتخاب کرده و فیلدهای پویا را پر کنید.',body);
+  const typeSelect=$('#requestTypeId',m);
+  const fieldsContainer=$('#dynamicFields',m);
+
+  typeSelect.addEventListener('change',()=>{
+    const t=types.find(x=>x.id===typeSelect.value);
+    if(!t){fieldsContainer.innerHTML='<p class="hint" style="text-align:center;color:#94a3b8;padding:14px 0;">ابتدا نوع درخواست را انتخاب کنید</p>';return;}
+    fieldsContainer.innerHTML=renderDynamicFields(t.fields||[], usersForLink);
+    // Wire depends (show/hide fields based on another field value)
+    wireFieldDepends(t.fields||[], fieldsContainer);
+  });
+
+  $('#requestForm',m).addEventListener('submit',async e=>{
+    e.preventDefault();
+    const rtId=typeSelect.value;
+    if(!rtId) return toast('نوع درخواست را انتخاب کنید',true);
+    const t=types.find(x=>x.id===rtId);
+    const data={};
+    // Collect field values
+    let valid=true;
+    for(const f of (t.fields||[])){
+      if(f.type==='duration' && f.auto) continue; // skip auto-computed
+      // Check visibility based on depends
+      if(f.depends){
+        const depName=Object.keys(f.depends)[0];
+        const depVal=f.depends[depName];
+        if(data[depName]!==depVal) continue;
+      }
+      const el=fieldsContainer.querySelector(`[name="field_${f.name}"]`);
+      if(!el) continue;
+      let val=el.value;
+      if(f.required && !val.trim()){
+        toast(`فیلد «${f.label}» اجباری است`,true);
+        valid=false;
+        break;
+      }
+      if(f.type==='number' && val) val=Number(val);
+      if(f.type==='duration' && !f.auto) val=Number(val)||0;
+      data[f.name]=val;
+    }
+    if(!valid) return;
+    // Auto-compute duration
+    for(const f of (t.fields||[])){
+      if(f.type==='duration' && f.auto){
+        const unit=(data['leave_unit']||'');
+        const fromD=data['from_date'], toD=data['to_date'];
+        const fromT=data['from_time'], toT=data['to_time'];
+        if(unit && fromD && toD){
+          try{
+            const from=new Date(unit==='روزانه'?fromD+'T00:00:00':fromD+'T'+(fromT||'00:00')+':00');
+            const to=new Date(unit==='روزانه'?toD+'T23:59:59':(fromD===toD?fromD+'T'+(toT||'23:59')+':59':toD+'T'+(toT||'23:59')+':59'));
+            const ms=to-from;
+            if(ms>0){
+              const days=Math.round(ms/86400000);
+              const hours=Math.round((ms%86400000)/3600000);
+              data[f.name]=unit==='روزانه'?`${days} روز`:`${days} روز و ${hours} ساعت`;
+            }
+          }catch(e){}
+        }
+      }
+    }
+    try{
+      await api('/requests',json('POST',{kind:t.code, request_type_id:rtId, data}));
+      $('#modalRoot').innerHTML='';
+      toast('درخواست ارسال شد');
+      await renderRequests();
+    }catch(err){toast(err.message,true);}
+  });
+}
+
+function renderDynamicFields(fields, usersOptions){
+  return fields.map(f=>{
+    if(f.type==='duration' && f.auto){
+      // Auto-computed, shown as readonly
+      return `<label>${f.label} <input class="field" name="field_${f.name}" data-field="${f.name}" readonly placeholder="خودکار محاسبه می‌شود" style="background:#f1f5f9;"></label>`;
+    }
+    let input='';
+    if(f.type==='text') input=`<input class="field" name="field_${f.name}" data-field="${f.name}" ${f.required?'required':''} placeholder="${esc(f.label)}">`;
+    else if(f.type==='textarea') input=`<textarea name="field_${f.name}" data-field="${f.name}" ${f.required?'required':''} rows="3" placeholder="${esc(f.label)}"></textarea>`;
+    else if(f.type==='number') input=`<input type="number" class="field" name="field_${f.name}" data-field="${f.name}" ${f.required?'required':''} placeholder="${esc(f.label)}">`;
+    else if(f.type==='date') input=`<input type="date" class="field" name="field_${f.name}" data-field="${f.name}" ${f.required?'required':''}>`;
+    else if(f.type==='time') input=`<input type="time" class="field" name="field_${f.name}" data-field="${f.name}" ${f.required?'required':''}>`;
+    else if(f.type==='datetime') input=`<input type="datetime-local" class="field" name="field_${f.name}" data-field="${f.name}" ${f.required?'required':''}>`;
+    else if(f.type==='select') input=`<select class="field" name="field_${f.name}" data-field="${f.name}" ${f.required?'required':''}><option value="">— انتخاب —</option>${(f.options||[]).map(o=>`<option value="${esc(o)}">${esc(o)}</option>`).join('')}</select>`;
+    else if(f.type==='user_link') input=`<select class="field" name="field_${f.name}" data-field="${f.name}" ${f.required?'required':''}><option value="">— انتخاب —</option>${usersOptions}</select>`;
+    else if(f.type==='duration') input=`<input type="number" class="field" name="field_${f.name}" data-field="${f.name}" ${f.required?'required':''} placeholder="مدت (ساعت/روز)">`;
+    return `<label>${esc(f.label)} ${f.required?'<span style="color:#ef4444;">*</span>':''}${input}</label>`;
+  }).join('');
+}
+
+function wireFieldDepends(fields, container){
+  fields.forEach(f=>{
+    if(f.depends){
+      const depName=Object.keys(f.depends)[0];
+      const depVal=f.depends[depName];
+      const triggerEl=container.querySelector(`[data-field="${depName}"]`);
+      const targetEl=container.querySelector(`[data-field="${f.name}"]`);
+      if(triggerEl && targetEl){
+        const update=()=>{
+          const parent=targetEl.closest('label');
+          if(parent) parent.style.display=(triggerEl.value===depVal)?'block':'none';
+        };
+        triggerEl.addEventListener('change',update);
+        triggerEl.addEventListener('input',update);
+        update();
+      }
+    }
+  });
+}
 function reviewRequest(id,status){const m=modal(status==='APPROVED'?'تأیید درخواست':'رد درخواست','در صورت نیاز یادداشت مدیریتی ثبت کنید.',`<form id="reviewRequestForm" class="stack"><label>یادداشت<textarea name="review_note" placeholder="اختیاری"></textarea></label><button class="btn ${status==='APPROVED'?'primary':'danger'}">ثبت ${status==='APPROVED'?'تأیید':'رد'}</button></form>`);$('#reviewRequestForm',m).addEventListener('submit',async e=>{e.preventDefault();try{await api(`/requests/${id}`,json('PATCH',{status,review_note:new FormData(e.currentTarget).get('review_note')}));$('#modalRoot').innerHTML='';toast('درخواست بررسی شد');await renderRequests()}catch(err){toast(err.message,true)}})}
 async function attendanceAction(kind){try{await api(`/attendance/${kind}`,{method:'POST'});toast(kind==='in'?'ورود ثبت شد':'خروج ثبت شد');await renderAttendance()}catch(err){toast(err.message,true)}}
 async function showNotifications(){const items=await api('/notifications');const panel=document.createElement('div');panel.className='notification-panel';panel.innerHTML=`<h3>اعلان‌های شما</h3>${items.length?items.map(n=>`<div class="notice-item" data-notice="${esc(n.id)}"><span class="notice-mark"></span><div><b>${esc(n.title)}</b><small>${esc(n.body)} · ${timeFmt(n.created_at)}${n.read_at?' · خوانده شده':''}</small></div>${!n.read_at?'<button class="text-link">خواندم</button>':''}</div>`).join(''):empty('اعلانی وجود ندارد')}`;$('#modalRoot').innerHTML='';document.body.append(panel);panel.addEventListener('click',async e=>{const row=e.target.closest('[data-notice]');if(row){await api(`/notifications/${row.dataset.notice}/read`,{method:'POST'});panel.remove();showNotifications();$('#notifyDot').classList.add('hidden')}});document.addEventListener('click',function close(e){if(!panel.contains(e.target)&&!e.target.closest('#notifyBtn')){panel.remove();document.removeEventListener('click',close)}},{once:true})}

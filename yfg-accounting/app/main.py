@@ -132,10 +132,29 @@ CREATE TABLE IF NOT EXISTS comments(
  body TEXT NOT NULL, created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS requests(
- id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), kind TEXT NOT NULL,
+ id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), kind TEXT NOT NULL DEFAULT 'GENERAL',
+ request_type_id TEXT REFERENCES request_types(id),  -- optional link to a defined request type
+ data_json TEXT NOT NULL DEFAULT '{}',  -- dynamic field values: JSON
+ user_name_override TEXT NOT NULL DEFAULT '', -- if filled by someone else, otherwise use user.name
  start_date TEXT, end_date TEXT, body TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'PENDING',
  reviewer_id TEXT REFERENCES users(id), review_note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
  reviewed_at TEXT
+);
+CREATE TABLE IF NOT EXISTS request_types(
+ id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+ icon TEXT NOT NULL DEFAULT '📝',
+ -- fields_json: JSON array of field specs
+ -- [{"name":"leave_kind","label":"نوع مرخصی","type":"select","options":["استحقاقی","استعلاجی","بدون حقوق"],"required":true},
+ --  {"name":"leave_unit","label":"واحد","type":"select","options":["روزانه","ساعتی"],"required":true},
+ --  {"name":"from_date","label":"از تاریخ","type":"date","required":true},
+ --  {"name":"to_date","label":"تا تاریخ","type":"date","required":true,"depends":"leave_unit:روزانه"},
+ --  {"name":"from_time","label":"از ساعت","type":"time","required":false,"depends":"leave_unit:ساعتی"},
+ --  {"name":"to_time","label":"تا ساعت","type":"time","required":false,"depends":"leave_unit:ساعتی"},
+ --  {"name":"requester","label":"نام درخواست‌کننده","type":"user_link","required":true},
+ --  {"name":"auto_duration","label":"مدت (محاسبه خودکار)","type":"duration","auto":true,"depends_on":["leave_unit","from_date","to_date","from_time","to_time"]},
+ --  {"name":"body","label":"شرح","type":"textarea","required":false}]
+ fields_json TEXT NOT NULL DEFAULT '[]',
+ active INTEGER NOT NULL DEFAULT 1, created_by TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS attendance(
  id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), work_date TEXT NOT NULL,
@@ -200,6 +219,8 @@ CREATE TABLE IF NOT EXISTS chat_messages(
  user_id TEXT NOT NULL REFERENCES users(id), body TEXT NOT NULL DEFAULT '',
  attachment_id TEXT, -- NULL or references chat_attachments.id
  reply_to TEXT REFERENCES chat_messages(id),
+ delivered_at TEXT NOT NULL DEFAULT '',  -- filled when other party fetched the message
+ read_at TEXT NOT NULL DEFAULT '',       -- filled when other party marked as read
  created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS chat_channel_members(
@@ -569,11 +590,13 @@ PERMISSION_CATALOG = [
         {"key": "kanban.view", "label": "برد کانبان", "roles": ["ADMIN", "CEO", "EMPLOYEE"]},
         {"key": "time.use", "label": "تایم ترکینگ", "roles": ["ADMIN", "CEO", "EMPLOYEE"]},
         {"key": "chat.use", "label": "گفتگو", "roles": ["ADMIN", "CEO", "EMPLOYEE"]},
+        {"key": "chat.monitor", "label": "نظارت نا‌محسوس بر گفتگوها", "roles": ["ADMIN"]},
         {"key": "automations.manage", "label": "مدیریت اتوماسیون‌ها", "roles": ["ADMIN", "CEO"]},
     ]},
     {"group": "تنظیمات", "items": [
         {"key": "settings.view", "label": "ورود به تنظیمات", "roles": ["ADMIN", "CEO"]},
         {"key": "settings.types", "label": "مدیریت انواع تسک/فرآیند/نقش/عملکرد", "roles": ["ADMIN", "CEO"]},
+        {"key": "settings.request_types", "label": "مدیریت انواع درخواست", "roles": ["ADMIN", "CEO"]},
         {"key": "settings.kpi", "label": "مدیریت شاخص‌های کلیدی (KPI)", "roles": ["ADMIN", "CEO"]},
         {"key": "settings.companies", "label": "زیربخش تعریف شرکت", "roles": ["ADMIN", "CEO"]},
         {"key": "settings.users", "label": "زیربخش کاربران", "roles": ["ADMIN", "CEO"]},
@@ -1176,10 +1199,31 @@ class CommentModel(BaseModel):
 
 
 class RequestModel(BaseModel):
-    kind: str
+    kind: str = "GENERAL"
+    request_type_id: str | None = None  # if a request_type is selected
+    data: dict = {}  # dynamic field values: name -> value
+    user_name_override: str = ""  # when filled by someone else on behalf
+    # legacy fields still supported
     start_date: str | None = None
     end_date: str | None = None
-    body: str = Field(min_length=2, max_length=2000)
+    body: str = ""
+
+class ReviewRequestModel(BaseModel):
+    status: str
+    review_note: str = ""
+
+class RequestTypeCreateModel(BaseModel):
+    code: str
+    name: str
+    icon: str = "📝"
+    fields: list[dict] = []  # array of field specs
+    active: int = 1
+
+class RequestTypeUpdateModel(BaseModel):
+    name: str | None = None
+    icon: str | None = None
+    fields: list[dict] | None = None
+    active: int | None = None
 
 
 class PerformanceEntryModel(BaseModel):
@@ -1203,11 +1247,6 @@ class PerformanceReviewModel(BaseModel):
     review_note: str = Field(default="", max_length=1000)
 
 
-class ReviewRequestModel(BaseModel):
-    status: str
-    review_note: str = ""
-
-
 @app.get("/", response_class=HTMLResponse)
 def home():
     return FileResponse(ROOT / "app" / "static" / "index.html")
@@ -1226,7 +1265,7 @@ def service_worker():
 @app.get("/api/status")
 def status():
     with db() as con:
-        return {"setup_needed": con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0, "product": "YFG Accounting Desk", "version": "0.3.0.03"}
+        return {"setup_needed": con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0, "product": "YFG Accounting Desk", "version": "0.3.0.04"}
 
 
 @app.post("/api/setup")
@@ -2144,24 +2183,49 @@ def list_requests(request: Request):
     user=current_user(request)
     with db() as con:
         if user["role"] in ("ADMIN","CEO"):
-            rows=con.execute("SELECT r.*,u.name user_name FROM requests r JOIN users u ON u.id=r.user_id ORDER BY CASE r.status WHEN 'PENDING' THEN 0 ELSE 1 END,r.created_at DESC").fetchall()
+            rows=con.execute("""SELECT r.*, u.name user_name, rt.name AS request_type_name, rt.icon AS request_type_icon
+                                FROM requests r
+                                LEFT JOIN users u ON u.id=r.user_id
+                                LEFT JOIN request_types rt ON rt.id=r.request_type_id
+                                ORDER BY CASE r.status WHEN 'PENDING' THEN 0 ELSE 1 END, r.created_at DESC""").fetchall()
         else:
-            rows=con.execute("SELECT r.*,u.name user_name FROM requests r JOIN users u ON u.id=r.user_id WHERE r.user_id=? ORDER BY created_at DESC",(user["id"],)).fetchall()
+            rows=con.execute("""SELECT r.*, u.name user_name, rt.name AS request_type_name, rt.icon AS request_type_icon
+                                FROM requests r
+                                LEFT JOIN users u ON u.id=r.user_id
+                                LEFT JOIN request_types rt ON rt.id=r.request_type_id
+                                WHERE r.user_id=? ORDER BY r.created_at DESC""",(user["id"],)).fetchall()
         return [dict(r) for r in rows]
 
 
 @app.post("/api/requests")
 def create_request(payload: RequestModel,request: Request):
     user=current_user(request)
-    if payload.kind not in ("LEAVE","GENERAL"): raise HTTPException(400,"نوع درخواست نامعتبر است")
-    payload.start_date=normalize_date_input(payload.start_date)
-    payload.end_date=normalize_date_input(payload.end_date)
-    if payload.kind=="LEAVE" and (not payload.start_date or not payload.end_date or payload.end_date<payload.start_date): raise HTTPException(400,"بازه مرخصی را بررسی کنید")
+    kind = payload.kind or "GENERAL"
+    data_json = json.dumps(payload.data, ensure_ascii=False) if payload.data else "{}"
+    start_date = payload.start_date or payload.data.get("from_date") if isinstance(payload.data, dict) else payload.start_date
+    end_date = payload.end_date or payload.data.get("to_date") if isinstance(payload.data, dict) else payload.end_date
+    body = payload.body or payload.data.get("body","") if isinstance(payload.data, dict) else payload.body
+
+    # Validate request_type if provided
+    request_type_name = None
+    if payload.request_type_id:
+        with db() as con:
+            rt = con.execute("SELECT * FROM request_types WHERE id=? AND active=1",(payload.request_type_id,)).fetchone()
+            if not rt: raise HTTPException(400,"نوع درخواست نامعتبر یا غیرفعال است")
+            request_type_name = rt["name"]
+
     with db() as con:
-        rid=uid(); con.execute("INSERT INTO requests VALUES(?,?,?,?,?,?,?,?,?,?,?)",(rid,user["id"],payload.kind,payload.start_date,payload.end_date,payload.body,"PENDING",None,"",now(),None))
-        for manager in con.execute("SELECT id FROM users WHERE role IN ('ADMIN','CEO') AND active=1").fetchall(): notify(con,manager["id"],"درخواست جدید",payload.kind)
-        audit(con,user["id"],"REQUEST_CREATE","request",rid,{"kind":payload.kind})
-        return {"id":rid}
+        rid=uid()
+        con.execute("""INSERT INTO requests
+            (id, user_id, kind, request_type_id, data_json, user_name_override,
+             start_date, end_date, body, status, reviewer_id, review_note, created_at, reviewed_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (rid, user["id"], kind, payload.request_type_id, data_json, payload.user_name_override,
+             start_date, end_date, body or "", "PENDING", None, "", now(), None))
+        for manager in con.execute("SELECT id FROM users WHERE role IN ('ADMIN','CEO') AND active=1").fetchall():
+            notify(con,manager["id"],"درخواست جدید", request_type_name or kind)
+        audit(con,user["id"],"REQUEST_CREATE","request",rid,{"kind":kind, "request_type_id": payload.request_type_id})
+    return {"id":rid}
 
 
 @app.patch("/api/requests/{request_id}")
@@ -2175,6 +2239,111 @@ def review_request(request_id:str,payload:ReviewRequestModel,request:Request):
         notify(con,item["user_id"],"درخواست شما بررسی شد",payload.status)
         audit(con,user["id"],"REQUEST_REVIEW","request",request_id,{"status":payload.status})
         return {"ok":True}
+
+
+# ========================================================================
+# REQUEST TYPES API (تنظیمات → انواع درخواست)
+# ========================================================================
+
+@app.get("/api/request-types")
+def list_request_types(request: Request):
+    user=current_user(request)
+    require_perm(user, "requests.view")
+    with db() as con:
+        rows = con.execute("""SELECT rt.*, u.name AS created_by_name, COUNT(r.id) AS usage_count
+                              FROM request_types rt LEFT JOIN users u ON u.id=rt.created_by
+                              LEFT JOIN requests r ON r.request_type_id=rt.id
+                              GROUP BY rt.id ORDER BY rt.created_at DESC""").fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            try:
+                d["fields"] = json.loads(r["fields_json"]) if r["fields_json"] else []
+            except Exception:
+                d["fields"] = []
+            del d["fields_json"]
+            result.append(d)
+        return result
+
+@app.post("/api/request-types")
+def create_request_type(payload: RequestTypeCreateModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "settings.request_types")
+    if not payload.code.strip() or not payload.name.strip():
+        raise HTTPException(400, "کد و نام نوع درخواست الزامی است")
+    rt_id = uid()
+    fields_json = json.dumps(payload.fields, ensure_ascii=False) if payload.fields else "[]"
+    with db() as con:
+        try:
+            con.execute("INSERT INTO request_types VALUES(?,?,?,?,?,?,?,?)",
+                        (rt_id, payload.code.strip(), payload.name.strip(), payload.icon or "📝",
+                         fields_json, payload.active, user["id"], now()))
+        except Exception as e:
+            if "UNIQUE" in str(e): raise HTTPException(400, "کد نوع درخواست تکراری است")
+            raise
+        audit(con, user["id"], "REQUEST_TYPE_CREATE", "request_type", rt_id, {"code": payload.code, "name": payload.name})
+    return {"id": rt_id, "code": payload.code}
+
+@app.get("/api/request-types/{rt_id}")
+def get_request_type(rt_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "requests.view")
+    with db() as con:
+        r = con.execute("SELECT * FROM request_types WHERE id=?", (rt_id,)).fetchone()
+        if not r: raise HTTPException(404, "نوع درخواست پیدا نشد")
+        d = dict(r)
+        try:
+            d["fields"] = json.loads(r["fields_json"]) if r["fields_json"] else []
+        except Exception:
+            d["fields"] = []
+        del d["fields_json"]
+        return d
+
+@app.patch("/api/request-types/{rt_id}")
+def update_request_type(rt_id: str, payload: RequestTypeUpdateModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "settings.request_types")
+    with db() as con:
+        existing = con.execute("SELECT * FROM request_types WHERE id=?", (rt_id,)).fetchone()
+        if not existing: raise HTTPException(404, "نوع درخواست پیدا نشد")
+        updates = []
+        params = []
+        if payload.name is not None:
+            updates.append("name=?")
+            params.append(payload.name.strip())
+        if payload.icon is not None:
+            updates.append("icon=?")
+            params.append(payload.icon)
+        if payload.fields is not None:
+            updates.append("fields_json=?")
+            params.append(json.dumps(payload.fields, ensure_ascii=False))
+        if payload.active is not None:
+            updates.append("active=?")
+            params.append(int(payload.active))
+        if not updates:
+            return {"ok": True, "updated": 0}
+        params.append(rt_id)
+        con.execute(f"UPDATE request_types SET {', '.join(updates)} WHERE id=?", params)
+        audit(con, user["id"], "REQUEST_TYPE_UPDATE", "request_type", rt_id, {"fields": updates})
+    return {"ok": True, "updated": len(updates)}
+
+@app.delete("/api/request-types/{rt_id}")
+def delete_request_type(rt_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "settings.request_types")
+    with db() as con:
+        existing = con.execute("SELECT * FROM request_types WHERE id=?", (rt_id,)).fetchone()
+        if not existing: raise HTTPException(404, "نوع درخواست پیدا نشد")
+        # Check if there are requests using this type
+        count = con.execute("SELECT COUNT(*) FROM requests WHERE request_type_id=?", (rt_id,)).fetchone()[0]
+        if count > 0:
+            # Soft delete: just deactivate
+            con.execute("UPDATE request_types SET active=0 WHERE id=?", (rt_id,))
+            audit(con, user["id"], "REQUEST_TYPE_DEACTIVATE", "request_type", rt_id, {"usage": count})
+            return {"ok": True, "deactivated": True, "usage": count}
+        con.execute("DELETE FROM request_types WHERE id=?", (rt_id,))
+        audit(con, user["id"], "REQUEST_TYPE_DELETE", "request_type", rt_id, {"code": existing["code"]})
+    return {"ok": True, "deactivated": False}
 
 
 @app.post("/api/attendance/{action}")
@@ -2606,18 +2775,32 @@ def add_members(channel_id: str, payload: ChatAddMembersModel, request: Request)
         return {"added": added}
 
 @app.get("/api/chat/channels/{channel_id}/messages")
-def list_messages(channel_id: str, request: Request):
+def list_messages(channel_id: str, request: Request, monitor: int = 0):
+    """Return messages for a channel. If monitor=1 and user has chat.monitor permission,
+    no read/delivered events are recorded (silent admin oversight)."""
     user = current_user(request)
     require_perm(user, "chat.use")
+    is_monitor = monitor == 1 and has_perm(user, "chat.monitor")
     with db() as con:
-        is_member = con.execute(
-            "SELECT 1 FROM chat_channel_members WHERE channel_id=? AND user_id=?",
-            (channel_id, user["id"])
-        ).fetchone()
-        if not is_member and user["role"] not in ("ADMIN", "CEO"):
-            raise HTTPException(403, "شما عضو این گفتگو نیستید")
+        if not is_monitor:
+            is_member = con.execute(
+                "SELECT 1 FROM chat_channel_members WHERE channel_id=? AND user_id=?",
+                (channel_id, user["id"])
+            ).fetchone()
+            if not is_member and user["role"] not in ("ADMIN", "CEO"):
+                raise HTTPException(403, "شما عضو این گفتگو نیستید")
+            # Mark messages NOT sent by me as delivered (single tick → double tick)
+            ts = now()
+            con.execute("""UPDATE chat_messages SET delivered_at=?
+                            WHERE channel_id=? AND user_id!=? AND delivered_at=''""",
+                         (ts, channel_id, user["id"]))
+            con.commit()
+        else:
+            # Monitoring silently: do not record delivered_at
+            pass
         rows = con.execute("""
-            SELECT cm.id, cm.channel_id, cm.user_id, cm.body, cm.attachment_id, cm.reply_to, cm.created_at,
+            SELECT cm.id, cm.channel_id, cm.user_id, cm.body, cm.attachment_id, cm.reply_to,
+                   cm.delivered_at, cm.read_at, cm.created_at,
                    u.name AS user_name, u.first_name, u.last_name, u.role AS user_role,
                    ca.original_name AS attachment_name, ca.size_bytes AS attachment_size, ca.mime_type AS attachment_mime
             FROM chat_messages cm
@@ -2649,8 +2832,8 @@ def send_message(channel_id: str, payload: ChatMessageModel, request: Request):
                 raise HTTPException(400, "پیوست نامعتبر")
         msg_id = uid()
         con.execute(
-            "INSERT INTO chat_messages (id, channel_id, user_id, body, attachment_id, reply_to, created_at) VALUES(?,?,?,?,?,?,?)",
-            (msg_id, channel_id, user["id"], payload.body.strip(), payload.attachment_id, payload.reply_to, now())
+            "INSERT INTO chat_messages (id, channel_id, user_id, body, attachment_id, reply_to, delivered_at, read_at, created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+            (msg_id, channel_id, user["id"], payload.body.strip(), payload.attachment_id, payload.reply_to, "", "", now())
         )
         members = con.execute(
             "SELECT user_id FROM chat_channel_members WHERE channel_id=? AND user_id!=?",
@@ -2675,9 +2858,16 @@ def mark_channel_read(channel_id: str, request: Request):
             (channel_id, user["id"])
         ).fetchone()
         if not is_member: raise HTTPException(403, "عضو نیستید")
+        ts = now()
+        # Update last_read_at (used for unread badges)
         con.execute("UPDATE chat_channel_members SET last_read_at=? WHERE channel_id=? AND user_id=?",
-                    (now(), channel_id, user["id"]))
-        return {"ok": True}
+                    (ts, channel_id, user["id"]))
+        # Mark all messages NOT sent by me as read (delivered_at → read_at, double tick → blue)
+        con.execute("""UPDATE chat_messages SET delivered_at=COALESCE(NULLIF(delivered_at,''), ?), read_at=?
+                       WHERE channel_id=? AND user_id!=? AND (read_at='' OR read_at IS NULL)""",
+                    (ts, ts, channel_id, user["id"]))
+        con.commit()
+        return {"ok": True, "read_at": ts}
 
 @app.post("/api/chat/upload")
 async def chat_upload(request: Request, file: UploadFile = File(...)):
@@ -2741,6 +2931,40 @@ def list_chat_users(request: Request):
             (user["id"],)
         ).fetchall()
         return [dict(r) for r in rows]
+
+@app.get("/api/chat/admin/all-channels")
+def admin_all_channels(request: Request):
+    """List ALL channels (for silent admin monitoring).
+    Requires chat.monitor permission. Returns display name, member list, last message preview,
+    and per-message counts. No read/delivered events are recorded when admin views messages via
+    the monitor endpoint."""
+    user = current_user(request)
+    require_perm(user, "chat.monitor")
+    with db() as con:
+        rows = con.execute("""
+            SELECT c.id, c.name, c.kind, c.created_by, c.created_at,
+                   (SELECT COUNT(*) FROM chat_messages WHERE channel_id=c.id) AS message_count,
+                   (SELECT created_at FROM chat_messages WHERE channel_id=c.id
+                       ORDER BY created_at DESC LIMIT 1) AS last_message_at,
+                   (SELECT COUNT(*) FROM chat_channel_members WHERE channel_id=c.id) AS member_count
+            FROM chat_channels c
+            ORDER BY last_message_at DESC NULLS LAST, c.created_at DESC
+        """).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            # Get member names
+            members = con.execute(
+                "SELECT u.id, u.name, u.role FROM chat_channel_members m JOIN users u ON u.id=m.user_id WHERE m.channel_id=?",
+                (r["id"],)
+            ).fetchall()
+            d["members"] = [dict(m) for m in members]
+            if r["kind"] == "DIRECT":
+                d["display_name"] = "، ".join(m["name"] for m in d["members"])
+            else:
+                d["display_name"] = r["name"] or "گروه بدون نام"
+            result.append(d)
+        return result
 
 
 # ========================================================================

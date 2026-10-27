@@ -275,3 +275,45 @@ Work Log:
 Stage Summary:
 - تب شرکت‌ها در مشتریان حالا مستقل از تب تنظیمات است و می‌توان مستقیماً شرکت جدید ساخت
 - رفع باگ validation در فرم‌های تنظیمات هم اعمال شد
+
+---
+Task ID: request-types-and-chat-monitor-0304
+Agent: main
+Task: انتقال انواع درخواست به تنظیمات + گفتگو نوتیف/تیک/نظارت + تایم ترکینگ زیر گزارشات
+
+Work Log:
+- Backend:
+  • جدول جدید request_types (code, name, icon, fields_json) — با fields_json شامل مشخصات کامل فیلدها
+  • requests به‌روزرسانی شد: request_type_id, data_json, user_name_override
+  • 5 endpoint جدید: GET/POST /api/request-types, GET/PATCH/DELETE /api/request-types/{id}
+  • POST /api/requests به‌روزرسانی شد تا request_type_id + data را بپذیرد
+  • chat_messages به‌روزرسانی شد: delivered_at + read_at
+  • list_messages پارامتر جدید ?monitor=1 (admin skip delivered/read events)
+  • send_message به ۹ ستون اضافه شد
+  • mark_channel_read: حالا read_at را روی پیام‌های دیگران تنظیم می‌کند
+  • GET /api/chat/admin/all-channels (chat.monitor فقط) — فهرست تمام کانال‌ها برای نظارت
+  • مجوز جدید: chat.monitor (فقط ADMIN) و settings.request_types (ADMIN/CEO)
+- Frontend:
+  • Settings → زیرتب «📝 انواع درخواست» با Field Builder (افزودن/حذف فیلد، نوع فیلد متن/تاریخ/ساعت/انتخاب/لینک کاربر/مدت، depends و depends_on برای فیلدهای شرطی و محاسبات خودکار)
+  • Requests → فرم پویا: انتخاب نوع درخواست، رندر فیلدها به‌صورت داینامیک، depends (نمایش/مخفی فیلد بر اساس مقدار فیلد دیگر)، محاسبه خودکار مدت (روزانه: فاصله تاریخ، ساعتی: فاصله تاریخ+ساعت)
+  • Chat: ۳ تیک — ✓ ارسال شد، ✓✓ دریافت شد (خاکستری)، ✓✓ آبی خوانده شد
+  • Chat: صدای bip-bip با Web Audio API هنگام دریافت پیام جدید از شخص دیگر
+  • Chat: toast «پیام از X دریافت شد» + آپدیت لیست نوتیف
+  • Chat: حالت «👁 نظارت نا‌محسوس» — ادمین لیست تمام گفتگوها را می‌بیند (نشان نظارت)، باز کردن کانال بدون ثبت delivered_at/read_at، فرستنده تیک‌ها را می‌بیند بدون اطلاع کارمندان
+  • Reports: زیرتب «⏱ تایم ترکینگ» اضافه شد؛ nav «تایم ترکینگ» از sidebar حذف شد
+  • رفع باگ: تقسیم گزینه‌ها در فرم انتخاب با کامای فارسی (،) + انگلیسی (,) — split با /[,،]/
+  • رفع باگ: renderTimeTracking با container آرگومان برای فراخوانی از Reports + window.__renderTimeTracking expose
+- نسخه 0.3.0.03 → 0.3.0.04، SW v16 → v17
+- مهاجرت DB: ALTER requests (+3 ستون)، ALTER chat_messages (+2 ستون)، CREATE request_types
+- تست E2E:
+  ✓ ساخت نوع درخواست مرخصی با ۹ فیلد (نوع/واحد/تاریخ‌ها/ساعت‌ها/کاربر/مدت خودکار/شرح)
+  ✓ رندر فرم پویا، depends (روزانه→تا تاریخ، ساعتی→ساعت‌ها)
+  ✓ محاسبه خودکار مدت
+  ✓ ارسال درخواست با همه فیلدها
+  ✓ Chat: ✓ (ارسال) → ✓✓ (دریافت توسط emp1) → ✓✓ آبی (خوانده توسط emp1)
+  ✓ نظارت ادمین: باز کردن کانال بدون تغییر delivered_at/read_at
+  ✓ تایم ترکینگ در Reports
+
+Stage Summary:
+- نسخه 0.3.0.04 با تغییرات کامل‌بخش (request types, chat monitor, ticks)
+- نکته نگهداری: scripts/sync_static.sh بعد از هر تغییر استاتیک

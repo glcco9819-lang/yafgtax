@@ -97,7 +97,7 @@
   function addViewSections() {
     const main = document.querySelector('main');
     if (!main) return;
-    ['kanban','kpi-report','time','chat','automations','iso30414','settings'].forEach(v => {
+    ['kanban','kpi-report','chat','automations','iso30414','settings'].forEach(v => {
       if (document.getElementById(`view-${v}`)) return;
       const section = document.createElement('section');
       section.id = `view-${v}`;
@@ -120,7 +120,7 @@
     switch(view) {
       case 'kanban': renderKanban(); break;
       case 'kpi-report': renderKPIReport(); break;
-      case 'time': renderTimeTracking(); break;
+      case 'time': renderTimeTracking(); break;  // legacy — moved under Reports
       case 'chat': renderChat(); break;
       case 'automations': renderAutomations(); break;
       case 'iso30414': renderISO30414(); break;
@@ -249,20 +249,47 @@
   }
 
   // ============ Time Tracking ============
-  async function renderTimeTracking() {
-    const section = document.getElementById('view-time');
-    if (!section) return;
+  async function renderTimeTracking(container) {
+    const target = container || document.getElementById('view-time');
+    if (!target) return;
     try {
       const [entries, timesheet] = await Promise.all([api('/time/entries'), api('/time/timesheet')]);
       const isAdmin = typeof state !== 'undefined' && (state.me?.role==='ADMIN'||state.me?.role==='CEO');
-      section.innerHTML = `<h1>تایم ترکینگ</h1><p class="hint">زمان صرف‌شده روی هر تسک را ثبت و گزارش بگیرید.</p><h3 style="margin-top:20px;">سوابق زمان</h3><div class="table-card"><table class="data-table"><thead><tr><th>کارمند</th><th>تسک</th><th>شرکت</th><th>شروع</th><th>پایان</th><th>مدت</th></tr></thead><tbody>${(entries||[]).map(e=>{const d=e.duration_seconds>0?`${Math.floor(e.duration_seconds/3600)}س ${Math.floor((e.duration_seconds%3600)/60)}د`:'—';return `<tr><td>${esc(e.user_name||'')}</td><td>${esc(e.task_title||'—')}</td><td>${esc(e.company_name||'—')}</td><td>${timeFmt(e.start_at)}</td><td>${e.end_at?timeFmt(e.end_at):'<span style="color:#10b981;">در حال اجرا</span>'}</td><td>${d}</td></tr>`}).join('')}</tbody></table></div>${isAdmin?`<h3 style="margin-top:20px;">گزارش تایم‌شیت</h3><div class="table-card"><table class="data-table"><thead><tr><th>کارمند</th><th>تسک</th><th>مجموع زمان</th><th>تعداد</th></tr></thead><tbody>${(timesheet||[]).map(t=>`<tr><td>${esc(t.user_name||'')}</td><td>${esc(t.task_title||'—')}</td><td>${Math.floor(t.total_seconds/3600)}س ${Math.floor((t.total_seconds%3600)/60)}د</td><td>${t.entry_count}</td></tr>`).join('')}</tbody></table></div>`:''}`;
-    } catch(e) { section.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
+      target.innerHTML = `<h3 style="margin:0 0 8px;">⏱ تایم ترکینگ</h3><p class="hint" style="margin-bottom:16px;">زمان صرف‌شده روی هر تسک را ثبت و گزارش بگیرید.</p><h4 style="margin-top:16px;">سوابق زمان</h4><div class="table-card"><table class="data-table"><thead><tr><th>کارمند</th><th>تسک</th><th>شرکت</th><th>شروع</th><th>پایان</th><th>مدت</th></tr></thead><tbody>${(entries||[]).map(e=>{const d=e.duration_seconds>0?`${Math.floor(e.duration_seconds/3600)}س ${Math.floor((e.duration_seconds%3600)/60)}د`:'—';return `<tr><td>${esc(e.user_name||'')}</td><td>${esc(e.task_title||'—')}</td><td>${esc(e.company_name||'—')}</td><td>${timeFmt(e.start_at)}</td><td>${e.end_at?timeFmt(e.end_at):'<span style="color:#10b981;">در حال اجرا</span>'}</td><td>${d}</td></tr>`}).join('')}</tbody></table></div>${isAdmin?`<h4 style="margin-top:20px;">گزارش تایم‌شیت</h4><div class="table-card"><table class="data-table"><thead><tr><th>کارمند</th><th>تسک</th><th>مجموع زمان</th><th>تعداد</th></tr></thead><tbody>${(timesheet||[]).map(t=>`<tr><td>${esc(t.user_name||'')}</td><td>${esc(t.task_title||'—')}</td><td>${Math.floor(t.total_seconds/3600)}س ${Math.floor((t.total_seconds%3600)/60)}د</td><td>${t.entry_count}</td></tr>`).join('')}</tbody></table></div>`:''}`;
+    } catch(e) { target.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
   }
 
   // ============ Chat — Full In-App Messenger ============
   let chatPollTimer = null;
   let chatCurrentChannel = null;
   let chatCurrentMessages = [];
+  let chatMonitorMode = false;  // when true, admin silently watches — no read/delivered events
+  let chatLastSeenMessageIds = new Set();
+  // Initialize Web Audio for message sound (gentle two-tone beep)
+  let chatAudioCtx = null;
+  function chatPlayBeep() {
+    try {
+      if (!chatAudioCtx) chatAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const ctx = chatAudioCtx;
+      const now = ctx.currentTime;
+      // Two short beeps (ding-dong style)
+      [880, 1320].forEach((freq, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.frequency.value = freq;
+        osc.type = 'sine';
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        const t = now + i * 0.15;
+        gain.gain.setValueAtTime(0, t);
+        gain.gain.linearRampToValueAtTime(0.15, t + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+        osc.start(t);
+        osc.stop(t + 0.13);
+      });
+    } catch(e) {/* silent — sound is non-essential */}
+  }
+
   async function renderChat() {
     const section = document.getElementById('view-chat');
     if (!section) return;
@@ -270,8 +297,11 @@
       // Stop any previous polling
       if (chatPollTimer) { clearInterval(chatPollTimer); chatPollTimer = null; }
       const isAdmin = state.me?.role === 'ADMIN' || state.me?.role === 'CEO';
+      const canMonitor = isAdmin && (state.me?.permissions?.['chat.monitor'] ?? true);
       const channels = await api('/chat/channels');
       const allUsers = await api('/chat/users');
+      // Reset message-id tracking when channel list reloads
+      chatLastSeenMessageIds = new Set();
       const renderChannelList = () => (channels||[]).map(ch=>{
         const isDirect = ch.kind === 'DIRECT';
         const icon = isDirect ? '👤' : '👥';
@@ -288,13 +318,18 @@
       section.innerHTML = `
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
           <h1 style="margin:0;">💬 گفتگو</h1>
-          <div style="display:flex;gap:8px;">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            ${canMonitor ? '<button class="btn soft small" id="chatMonitorToggle" onclick="window.__chatToggleMonitor()" title="نظارت نا‌محسوس بر گفتگوهای کارکنان">👁 نظارت نا‌محسوس</button>' : ''}
             <button class="btn primary small" onclick="window.__chatNewDM()">＋ گفتگو مستقیم</button>
             <button class="btn soft small" onclick="window.__chatNewGroup()">👥 گروه جدید</button>
           </div>
         </div>
-        <div style="display:flex;gap:14px;height:calc(100vh - 240px);border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;background:#fff;">
-          <div style="width:260px;flex-shrink:0;background:#f8fafc;border-left:1px solid #e2e8f0;overflow-y:auto;padding:10px;">
+        <div id="chatMonitorBanner" style="display:none;background:#fef3c7;color:#92400e;padding:8px 14px;border-radius:10px;margin-bottom:10px;font-size:12px;">
+          🔍 <b>حالت نظارت فعال است:</b> شما در حال مشاهده گفتگو بدون اطلاع اعضا هستید. هیچ علامت «دریافت شد» یا «خوانده شد» روی پیام‌ها ثبت نخواهد شد.
+          <button class="btn small soft" style="margin-right:8px;" onclick="window.__chatToggleMonitor()">خروج از نظارت</button>
+        </div>
+        <div style="display:flex;gap:14px;height:calc(100vh - 280px);border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;background:#fff;">
+          <div id="chatSidebar" style="width:260px;flex-shrink:0;background:#f8fafc;border-left:1px solid #e2e8f0;overflow-y:auto;padding:10px;">
             ${renderChannelList()}
           </div>
           <div style="flex:1;display:flex;flex-direction:column;min-width:0;">
@@ -312,11 +347,66 @@
             </div>
           </div>
         </div>
-        <p class="hint" style="margin-top:10px;font-size:11px;color:#94a3b8;">فایل‌های مجاز: تصویر، PDF، اکسل، ورد، فشرده — حداکثر ۲۵ مگابایت</p>
+        <p class="hint" style="margin-top:10px;font-size:11px;color:#94a3b8;">فایل‌های مجاز: تصویر، PDF، اکسل، ورد، فشرده — حداکثر ۲۵ مگابایت · تیک‌ها: ✓ ارسال شد · ✓✓ دریافت شد · ✓✓ (آبی) خوانده شد</p>
       `;
+
+      // Toggle monitor mode
+      window.__chatToggleMonitor = async () => {
+        chatMonitorMode = !chatMonitorMode;
+        chatCurrentChannel = null;
+        document.getElementById('chatMonitorBanner').style.display = chatMonitorMode ? 'block' : 'none';
+        const toggle = document.getElementById('chatMonitorToggle');
+        if (toggle) {
+          toggle.style.background = chatMonitorMode ? '#fef3c7' : '';
+          toggle.textContent = chatMonitorMode ? '👁 خروج از نظارت' : '👁 نظارت نا‌محسوس';
+        }
+        if (chatMonitorMode) {
+          // Load ALL channels (admin view, silent)
+          try {
+            const all = await api('/chat/admin/all-channels');
+            const sidebar = document.getElementById('chatSidebar');
+            sidebar.innerHTML = (all||[]).map(ch=>{
+              const isDirect = ch.kind === 'DIRECT';
+              const icon = isDirect ? '👤' : '👥';
+              const members = ch.members || [];
+              const memberList = members.map(m=>esc(m.name)).join('، ');
+              return `<div onclick="window.__chatMonitorOpen('${ch.id}')" id="chatItem-${ch.id}" style="padding:11px 12px;border-radius:10px;cursor:pointer;margin-bottom:6px;background:#fff;border:1px dashed #cbd5e1;">
+                <div style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;">
+                  <span style="font-size:14px;">${icon}</span>
+                  <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(ch.display_name||ch.name||'گفتگو')}</span>
+                  <span style="background:#fef3c7;color:#92400e;font-size:10px;padding:1px 6px;border-radius:6px;">👁 نظارت</span>
+                </div>
+                <div style="font-size:10px;color:#64748b;margin-top:4px;">${ch.message_count||0} پیام · ${ch.member_count} عضو · ${memberList}</div>
+              </div>`;
+            }).join('') || '<p style="text-align:center;color:#94a3b8;font-size:12px;padding:16px 8px;">گفتگویی وجود ندارد</p>';
+          } catch(e) { toast(e.message, true); }
+        } else {
+          // Restore normal channel list
+          renderChat();
+        }
+      };
+
+      // Silent monitor open (no read events)
+      window.__chatMonitorOpen = async (chId) => {
+        chatCurrentChannel = chId;
+        $$('[id^="chatItem-"]').forEach(e=>{ e.style.background='#fff'; e.style.border='1px dashed #cbd5e1'; });
+        const item = document.getElementById(`chatItem-${chId}`);
+        if (item) { item.style.background='#fef3c7'; }
+        try {
+          const ch = await api(`/chat/channels/${chId}`);
+          // Use monitor=1 to skip delivered/read recording
+          const msgs = await api(`/chat/channels/${chId}/messages?monitor=1`);
+          chatCurrentMessages = msgs || [];
+          const isGroup = ch.kind === 'GROUP';
+          $('#chatHeaderTitle').innerHTML = `${isGroup?'👥':'👤'} ${esc(ch.display_name||ch.name||'گفتگو مستقیم')} <span style="color:#92400e;font-size:11px;background:#fef3c7;padding:2px 8px;border-radius:6px;margin-right:8px;">👁 نظارت</span>`;
+          $('#chatHeaderActions').innerHTML = `<span style="font-size:11px;color:#92400e;">شما در حال نظارت هستید — عضو نیستید</span>`;
+          renderChatMessages(chatCurrentMessages, true);
+        } catch(e) { toast(e.message, true); }
+      };
 
       // Channel open
       window.__chatOpen = async (chId) => {
+        if (chatMonitorMode) return window.__chatMonitorOpen(chId);
         chatCurrentChannel = chId;
         // Update selected styling
         $$('[id^="chatItem-"]').forEach(e=>e.style.background='#fff');
@@ -345,6 +435,7 @@
       // Send message
       window.__chatSend = async () => {
         if (!chatCurrentChannel) return toast('ابتدا یک گفتگو را انتخاب کنید', true);
+        if (chatMonitorMode) return toast('در حالت نظارت نمی‌توانید پیام بفرستید', true);
         const i = document.getElementById('chatInput');
         const body = i.value.trim();
         if (!body) return;
@@ -364,11 +455,15 @@
           input.value = '';
           return;
         }
+        if (chatMonitorMode) {
+          toast('در حالت نظارت نمی‌توانید فایل بفرستید', true);
+          input.value = '';
+          return;
+        }
         const fd = new FormData();
         fd.append('file', input.files[0]);
         try {
           const up = await api('/chat/upload', {method:'POST', body: fd});
-          // Send a message with attachment_id and empty body
           await api(`/chat/channels/${chatCurrentChannel}/messages`, {
             method:'POST', body: JSON.stringify({body: '', attachment_id: up.attachment_id})
           });
@@ -402,7 +497,6 @@
 
       // Add member
       window.__chatAddMember = (chId) => {
-        // Filter out users already in the channel — simplest: pass allUsers to picker and let user pick
         openChatUserMultiPicker('افزودن عضو به گروه', 'کاربران برای افزودن', allUsers, (selected)=>{
           api(`/chat/channels/${chId}/members`, {method:'POST', body: JSON.stringify({member_ids: selected})})
             .then(r=>{toast(`${r.added} عضو اضافه شد`); window.__chatOpen(chId);})
@@ -432,16 +526,38 @@
       chatPollTimer = setInterval(async () => {
         if (!chatCurrentChannel) return;
         try {
-          const fresh = await api(`/chat/channels/${chatCurrentChannel}/messages`);
-          // Re-render only if message count changed
-          if (JSON.stringify(fresh.map(m=>m.id)) !== JSON.stringify(chatCurrentMessages.map(m=>m.id))) {
+          const url = chatMonitorMode
+            ? `/chat/channels/${chatCurrentChannel}/messages?monitor=1`
+            : `/chat/channels/${chatCurrentChannel}/messages`;
+          const fresh = await api(url);
+          // Detect new incoming messages (from others)
+          const incomingNew = (fresh||[]).filter(m =>
+            m.user_id !== state.me.id && !chatLastSeenMessageIds.has(m.id)
+          );
+          // Play sound + toast for new incoming messages (only outside monitor mode)
+          if (incomingNew.length > 0 && !chatMonitorMode) {
+            chatPlayBeep();
+            // Show toast "پیام از X دریافت شد"
+            const senderName = incomingNew[incomingNew.length - 1].user_name || 'کاربر';
+            toast(`پیام از ${senderName} دریافت شد`);
+          }
+          // Update seen set
+          chatLastSeenMessageIds = new Set((fresh||[]).map(m=>m.id));
+          // Re-render only if message count or status changed
+          const currentSig = JSON.stringify((chatCurrentMessages||[]).map(m=>({id:m.id, d:m.delivered_at, r:m.read_at})));
+          const freshSig = JSON.stringify((fresh||[]).map(m=>({id:m.id, d:m.delivered_at, r:m.read_at})));
+          if (freshSig !== currentSig) {
             chatCurrentMessages = fresh || [];
-            renderChatMessages(chatCurrentMessages);
+            renderChatMessages(chatCurrentMessages, chatMonitorMode);
+            // If new messages arrived while chat is open and not in monitor mode, mark channel as read
+            if (incomingNew.length > 0 && !chatMonitorMode) {
+              api(`/chat/channels/${chatCurrentChannel}/read`, {method:'POST'}).catch(()=>{});
+            }
           }
         } catch(e) {/* silent */}
       }, 5000);
 
-      function renderChatMessages(msgs) {
+      function renderChatMessages(msgs, isMonitor=false) {
         const c = document.getElementById('chatMessages');
         if (!c) return;
         if (!msgs.length) {
@@ -450,13 +566,20 @@
         }
         c.innerHTML = msgs.map(m => {
           const mine = m.user_id === state.me.id;
+          // Tick status (only for my own messages)
+          let tickHTML = '';
+          if (mine && !isMonitor) {
+            if (m.read_at) tickHTML = `<span style="color:#3b82f6;font-size:11px;margin-right:4px;">✓✓</span>`;
+            else if (m.delivered_at) tickHTML = `<span style="color:#94a3b8;font-size:11px;margin-right:4px;">✓✓</span>`;
+            else tickHTML = `<span style="color:#94a3b8;font-size:11px;margin-right:4px;">✓</span>`;
+          }
           const att = m.attachment_name ? `<a href="/api/chat/attachments/${m.attachment_id}" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,0.18);padding:6px 10px;border-radius:6px;font-size:12px;text-decoration:none;color:inherit;margin-top:6px;">📎 ${esc(m.attachment_name)} <span style="opacity:0.6;">(${m.attachment_size?(m.attachment_size/1024).toFixed(1)+'KB':''})</span></a>` : '';
           return `<div style="margin-bottom:14px;display:flex;justify-content:${mine?'flex-end':'flex-start'};">
             <div style="max-width:70%;padding:10px 14px;border-radius:14px;background:${mine?'#0b8f89':'#ffffff'};color:${mine?'#fff':'#0f172a'};box-shadow:0 1px 2px rgba(0,0,0,0.06);border:1px solid ${mine?'transparent':'#e2e8f0'};">
               <div style="font-size:11px;opacity:${mine?0.8:0.6};margin-bottom:4px;font-weight:600;">${mine?'شما':esc(m.user_name)}</div>
               ${m.body?`<div style="font-size:13px;line-height:1.6;white-space:pre-wrap;word-wrap:break-word;">${esc(m.body)}</div>`:''}
               ${att}
-              <div style="font-size:10px;opacity:0.6;margin-top:4px;text-align:${mine?'left':'right'};">${timeFmt(m.created_at)}</div>
+              <div style="font-size:10px;opacity:0.6;margin-top:4px;text-align:${mine?'left':'right'};display:flex;align-items:center;justify-content:${mine?'flex-end':'flex-start'};gap:4px;">${timeFmt(m.created_at)}${tickHTML}</div>
             </div>
           </div>`;
         }).join('');
@@ -555,6 +678,7 @@
   window.__stopTimer = stopTimer;
   window.__enhancedShowView = showView;
   window.__renderKPIReport = renderKPIReport;
+  window.__renderTimeTracking = renderTimeTracking;
   window.__userKPIDetail = (uid) => userKPIDetail(uid);
 
   // ============ USER MANAGEMENT (edit, access, deactivate) ============
@@ -1251,6 +1375,7 @@
     {key:'employees', label:'عملکرد کارکنان', icon:'♙'},
     {key:'audit', label:'گزارش ممیزی', icon:'⌁'},
     {key:'kpi', label:'گزارش KPI', icon:'🎯'},
+    {key:'time', label:'تایم ترکینگ', icon:'⏱'},
   ];
 
   // ============ Reports (گزارشات) ============
@@ -1259,7 +1384,7 @@
     if (!section) return;
     section.innerHTML = `
       <h1>گزارشات</h1>
-      <p class="hint" style="margin-bottom:16px;">همه گزارش‌های مدیریتی دفتر در یک‌جا — عملکرد تیم، عملکرد کارکنان، ممیزی و شاخص‌های کلیدی عملکرد.</p>
+      <p class="hint" style="margin-bottom:16px;">همه گزارش‌های مدیریتی دفتر در یک‌جا — عملکرد تیم، عملکرد کارکنان، ممیزی، شاخص‌های کلیدی عملکرد و تایم‌ترکینگ.</p>
       <div class="tabs" style="margin-bottom:16px;flex-wrap:wrap;">
         ${REPORT_TABS.map(t => `<button class="tab ${reportsTab===t.key?'active':''}" data-rtab="${t.key}">${t.icon} ${t.label}</button>`).join('')}
       </div>
@@ -1272,6 +1397,7 @@
       else if (reportsTab === 'employees') await renderEmployeesPerf(content);
       else if (reportsTab === 'audit') await renderAuditReport(content);
       else if (reportsTab === 'kpi') await window.__renderKPIReport(content);
+      else if (reportsTab === 'time') await window.__renderTimeTracking(content);
     } catch(e) { content.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
   }
   window.__renderReports = renderReports;
@@ -1378,6 +1504,7 @@
         {key:'companies2', label:'تعریف شرکت', icon:'🏢'},
         {key:'users2', label:'کاربران', icon:'👤'},
         {key:'perms', label:'نقش‌ها و دسترسی‌ها', icon:'🔐'},
+        {key:'request_types', label:'انواع درخواست', icon:'📝'},
         {key:'kpis', label:'شاخص‌های کلیدی (KPI)', icon:'🎯'},
         {key:'task_types', label:'انواع تسک', icon:'📋'},
         {key:'process_types', label:'انواع فرآیند', icon:'🔄'},
@@ -1386,7 +1513,7 @@
       ];
       section.innerHTML = `
         <h1>تنظیمات</h1>
-        <p class="hint" style="margin-bottom:16px;">تعریف شرکت (حقیقی/حقوقی)، مدیریت کاربران و شرکت‌های واگذارشده، نقش‌ها و دسترسی‌های ریزفیلد، شاخص‌ها و انواع</p>
+        <p class="hint" style="margin-bottom:16px;">تعریف شرکت (حقیقی/حقوقی)، مدیریت کاربران و شرکت‌های واگذارشده، نقش‌ها و دسترسی‌های ریزفیلد، شاخص‌ها، انواع درخواست و انواع</p>
         <div class="tabs" style="margin-bottom:16px;flex-wrap:wrap;">
           ${tabs.map(t => `<button class="tab ${settingsTab===t.key?'active':''}" onclick="window.__setSettingsTab('${t.key}')">${t.icon} ${t.label}</button>`).join('')}
         </div>
@@ -1399,12 +1526,228 @@
         await renderUsersRich(document.getElementById('settingsContent'));
       } else if (settingsTab === 'perms') {
         await renderPermsRich(document.getElementById('settingsContent'));
+      } else if (settingsTab === 'request_types') {
+        await renderRequestTypesTab(document.getElementById('settingsContent'));
       } else if (settingsTab === 'kpis') {
         renderKPITab(data);
       } else {
         renderSettingsTab(data, tabs);
       }
     } catch(e) { section.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
+  }
+
+  // ============ REQUEST TYPES TAB (Settings → انواع درخواست) ============
+  const FIELD_TYPES = [
+    {value:'text', label:'متن کوتاه', icon:'📝'},
+    {value:'textarea', label:'متن طولانی', icon:'📃'},
+    {value:'number', label:'عدد', icon:'🔢'},
+    {value:'date', label:'تاریخ', icon:'📅'},
+    {value:'time', label:'ساعت', icon:'⏰'},
+    {value:'datetime', label:'تاریخ و ساعت', icon:'🗓'},
+    {value:'select', label:'انتخاب از لیست', icon:'▾'},
+    {value:'user_link', label:'لینک به کاربر', icon:'👤'},
+    {value:'duration', label:'مدت (محاسبه خودکار)', icon:'⌛'},
+  ];
+
+  async function renderRequestTypesTab(container) {
+    if (!container) return;
+    try {
+      const types = await api('/request-types');
+      const rows = (types||[]).map(t => `
+        <tr>
+          <td style="font-size:20px;">${t.icon || '📝'}</td>
+          <td><code><strong>${esc(t.code)}</strong></code></td>
+          <td><strong>${esc(t.name)}</strong></td>
+          <td>${(t.fields||[]).length} فیلد</td>
+          <td>${t.usage_count || 0}</td>
+          <td>${t.active ? '<span style="color:#10b981;">● فعال</span>' : '<span style="color:#94a3b8;">○ غیرفعال</span>'}</td>
+          <td style="display:flex;gap:4px;flex-wrap:wrap;">
+            <button class="btn soft small" onclick="window.__editRequestType('${t.id}')">✎ ویرایش</button>
+            <button class="btn small" style="background:#fee2e2;color:#991b1b;" onclick="window.__deleteRequestType('${t.id}','${esc(t.code)}')">حذف</button>
+          </td>
+        </tr>`).join('');
+      container.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+          <div><h3 style="margin:0;">📝 انواع درخواست (${(types||[]).length})</h3><p class="hint" style="margin-top:2px;">تعریف انواع درخواست با فیلدهای دلخواه (مثلاً مرخصی: نوع مرخصی، واحد، تاریخ، ساعت، مدت خودکار)</p></div>
+          <button class="btn primary small" onclick="window.__newRequestType()">＋ نوع درخواست جدید</button>
+        </div>
+        <div class="table-card" style="overflow-x:auto;">
+          <table class="data-table">
+            <thead><tr><th></th><th>کد</th><th>نام</th><th>فیلدها</th><th>استفاده</th><th>وضعیت</th><th>عملیات</th></tr></thead>
+            <tbody>
+              ${rows || '<tr><td colspan="7" style="text-align:center;padding:20px;color:#64748b;">نوع درخواستی تعریف نشده — با دکمه «نوع درخواست جدید» شروع کنید.</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+        <p class="hint" style="margin-top:12px;">پس از تعریف نوع، کاربران در تب «درخواست‌ها» می‌توانند نوع را انتخاب کرده و فرم پویا را پر کنند.</p>`;
+
+      window.__newRequestType = () => openRequestTypeForm(null, () => renderSettings());
+      window.__editRequestType = (id) => openRequestTypeForm(id, () => renderSettings());
+      window.__deleteRequestType = async (id, code) => {
+        if (!confirm(`حذف نوع درخواست «${code}»؟ اگر درخواستی از این نوع وجود داشته باشد، فقط غیرفعال می‌شود.`)) return;
+        try {
+          const r = await api(`/request-types/${id}`, {method:'DELETE'});
+          toast(r.deactivated ? 'نوع درخواست غیرفعال شد (درخواست‌های موجود حفظ شدند)' : 'نوع درخواست حذف شد');
+          renderSettings();
+        } catch(e) { toast(e.message, true); }
+      };
+    } catch(e) { container.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
+  }
+
+  function openRequestTypeForm(id, onDone) {
+    if (id) {
+      api(`/request-types/${id}`).then(rt => showForm(rt)).catch(e => toast(e.message, true));
+    } else { showForm(null); }
+
+    function showForm(rt) {
+      const isNew = !rt;
+      const fields = (rt?.fields) || [];
+      const fieldRowsHTML = fields.map((f, i) => fieldRowHTML(f, i)).join('');
+      const body = `
+        <form id="requestTypeForm" style="display:grid;gap:12px;">
+          <div class="form-grid">
+            <label>کد نوع درخواست <span style="color:#ef4444;">*</span>
+              <input class="field" name="code" required value="${rt?esc(rt.code):''}" ${rt?'readonly':''} placeholder="مثلاً LEAVE">
+            </label>
+            <label>نام نوع درخواست <span style="color:#ef4444;">*</span>
+              <input class="field" name="name" required value="${rt?esc(rt.name):''}" placeholder="مثلاً درخواست مرخصی">
+            </label>
+            <label>آیکون (اموجی)
+              <input class="field" name="icon" value="${rt?esc(rt.icon||'📝'):'📝'}" placeholder="📝">
+            </label>
+          </div>
+
+          <div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+              <strong>تعریف فیلدها (${fields.length})</strong>
+              <button type="button" class="btn primary small" onclick="window.__addField()">＋ افزودن فیلد</button>
+            </div>
+            <div id="requestTypeFields" style="display:grid;gap:8px;">${fieldRowsHTML}</div>
+          </div>
+
+          <label class="check-row"><input type="checkbox" name="active" ${(!rt || rt.active)?'checked':''}> فعال</label>
+
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px;">
+            <button type="button" class="btn soft" onclick="document.getElementById('modalRoot').innerHTML=''">انصراف</button>
+            <button type="submit" class="btn primary">${isNew?'ایجاد':'ذخیره'}</button>
+          </div>
+        </form>
+        <p class="hint" style="margin-top:10px;font-size:11px;color:#94a3b8;">
+          فیلد نوع <code>duration</code> با <code>auto: true</code> مدت را بر اساس <code>depends_on</code> خودکار محاسبه می‌کند.
+          با <code>depends: {field_name: value}</code> فیلد فقط در صورت انتخاب مقدار معین نمایش داده می‌شود (مثلاً «تا تاریخ» فقط برای «روزانه»).
+        </p>`;
+      modal(`${isNew?'＋ نوع درخواست جدید':'✎ ویرایش نوع درخواست'}`, 'هر نوع می‌تواند چند فیلد دلخواه با انواع متن، تاریخ، ساعت، انتخاب و... داشته باشد.', body);
+
+      window.__addField = (existing) => {
+        const idx = document.querySelectorAll('.req-type-field-row').length;
+        const row = document.createElement('div');
+        row.innerHTML = fieldRowHTML(existing || {name:'', label:'', type:'text', required:false, options:[]}, idx);
+        document.getElementById('requestTypeFields').appendChild(row.firstElementChild);
+      };
+      window.__removeField = (idx) => {
+        const row = document.querySelector(`[data-idx="${idx}"]`);
+        if (row) row.remove();
+      };
+      // Field type change: show/hide options input
+      window.__onFieldTypeChange = (idx) => {
+        const sel = document.querySelector(`[data-idx="${idx}"] [name="field_type"]`);
+        const opts = document.querySelector(`[data-idx="${idx}"] .field-options`);
+        if (sel && opts) {
+          const t = sel.value;
+          opts.style.display = (t === 'select') ? 'block' : 'none';
+        }
+      };
+      // Initialize field type dropdowns
+      fields.forEach((f, i) => window.__onFieldTypeChange(i));
+
+      const form = document.getElementById('requestTypeForm');
+      form.addEventListener('submit', async e => {
+        e.preventDefault();
+        const fd = new FormData(form);
+        const code = fd.get('code').trim();
+        const name = fd.get('name').trim();
+        const icon = fd.get('icon').trim() || '📝';
+        const active = fd.get('active') ? 1 : 0;
+        if (!code || !name) return toast('کد و نام الزامی است', true);
+        // Collect fields from rows
+        const fields = [];
+        document.querySelectorAll('.req-type-field-row').forEach(row => {
+          const name_f = row.querySelector('[name="field_name"]').value.trim();
+          const label = row.querySelector('[name="field_label"]').value.trim();
+          const type = row.querySelector('[name="field_type"]').value;
+          const required = row.querySelector('[name="field_required"]')?.checked || false;
+          const auto = row.querySelector('[name="field_auto"]')?.checked || false;
+          const dependsField = row.querySelector('[name="field_depends_name"]')?.value.trim() || '';
+          const dependsValue = row.querySelector('[name="field_depends_value"]')?.value.trim() || '';
+          const dependsOnStr = row.querySelector('[name="field_depends_on"]')?.value.trim() || '';
+          const optionsStr = row.querySelector('[name="field_options"]')?.value.trim() || '';
+          if (!name_f || !label) return; // skip invalid
+          const field = {name: name_f, label, type, required};
+          if (type === 'select' && optionsStr) field.options = optionsStr.split(/[,،]/).map(s=>s.trim()).filter(Boolean);
+          if (auto) field.auto = true;
+          if (dependsOnStr) field.depends_on = dependsOnStr.split(/[,،]/).map(s=>s.trim()).filter(Boolean);
+          if (dependsField && dependsValue) field.depends = {[dependsField]: dependsValue};
+          fields.push(field);
+        });
+        const payload = {code, name, icon, fields, active};
+        try {
+          if (isNew) {
+            await api('/request-types', {method:'POST', body:JSON.stringify(payload)});
+            toast('نوع درخواست ایجاد شد');
+          } else {
+            await api(`/request-types/${id}`, {method:'PATCH', body:JSON.stringify(payload)});
+            toast('تغییرات ذخیره شد');
+          }
+          document.getElementById('modalRoot').innerHTML = '';
+          onDone();
+        } catch(err) { toast(err.message, true); }
+      });
+    }
+  }
+
+  function fieldRowHTML(f, idx) {
+    const t = f.type || 'text';
+    const options = (f.options||[]).join(', ');
+    const dependsOn = (f.depends_on||[]).join(', ');
+    const dependsName = f.depends ? Object.keys(f.depends)[0] : '';
+    const dependsValue = f.depends ? Object.values(f.depends)[0] : '';
+    return `
+      <div class="req-type-field-row" data-idx="${idx}" style="background:#f8fafc;padding:10px;border-radius:8px;display:grid;gap:6px;border:1px solid #e2e8f0;">
+        <div class="form-grid">
+          <label>نام فیلد (انگلیسی) <span style="color:#ef4444;">*</span>
+            <input class="field" name="field_name" required value="${esc(f.name||'')}" placeholder="leave_kind">
+          </label>
+          <label>برچسب فارسی <span style="color:#ef4444;">*</span>
+            <input class="field" name="field_label" required value="${esc(f.label||'')}" placeholder="نوع مرخصی">
+          </label>
+          <label>نوع فیلد <span style="color:#ef4444;">*</span>
+            <select class="field" name="field_type" onchange="window.__onFieldTypeChange(${idx})">
+              ${FIELD_TYPES.map(ft => `<option value="${ft.value}" ${t===ft.value?'selected':''}>${ft.icon} ${ft.label}</option>`).join('')}
+            </select>
+          </label>
+        </div>
+        <div class="form-grid">
+          <label class="check-row" style="align-self:end;"><input type="checkbox" name="field_required" ${f.required?'checked':''}> اجباری</label>
+          <label class="check-row" style="align-self:end;"><input type="checkbox" name="field_auto" ${f.auto?'checked':''}> محاسبه خودکار (duration)</label>
+          <button type="button" class="btn small" style="background:#fee2e2;color:#991b1b;align-self:end;" onclick="window.__removeField(${idx})">حذف</button>
+        </div>
+        <div class="form-grid">
+          <label>وابسته به فیلد (نام فیلد)
+            <input class="field" name="field_depends_name" value="${esc(dependsName)}" placeholder="leave_unit">
+          </label>
+          <label>با مقدار (فقط هنگام نمایش فیلد)
+            <input class="field" name="field_depends_value" value="${esc(dependsValue)}" placeholder="روزانه">
+          </label>
+          <label>depends_on (چندتایی با کاما، برای duration)
+            <input class="field" name="field_depends_on" value="${esc(dependsOn)}" placeholder="leave_unit, from_date, to_date">
+          </label>
+        </div>
+        <div class="field-options" style="${t==='select'?'':'display:none;'}">
+          <label>گزینه‌ها (با کاما جدا کنید)
+            <input class="field" name="field_options" value="${esc(options)}" placeholder="استحقاقی، استعلاجی، بدون حقوق">
+          </label>
+        </div>
+      </div>`;
   }
 
   // ============ KPI TAB ============
