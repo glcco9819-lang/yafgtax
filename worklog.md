@@ -363,3 +363,49 @@ Stage Summary:
 - ۳ کارت آماری: قراردادهای فعال (جاری امروز)، پیش‌فاکتورهای ناتمام، فاکتورهای پرداخت‌نشده با مانده
 - شرکت‌ها: توضیحات + تماس‌های متعدد (با ۶ نوع: PHONE/MOBILE/EMAIL/FAX/WEBSITE/OTHER)
 - نکته نگهداری: scripts/start_backend.sh برای restart امن بک‌اند
+
+---
+Task ID: realistic-data-and-finalize-0305
+Agent: main
+Task: ورود اطلاعات واقعی + بررسی گزارش‌ها + آماده‌سازی بسته نهایی
+
+Work Log:
+- اسکریپت scripts/seed_realistic_data.py ساخته شد (idempotent): ۳ شرکت، ۵ شخص، ۱۰ تماس، ۳ قرارداد، ۳ پیش‌فاکتور، ۴ فاکتور
+- داده‌های واقعی وارد شدند:
+  • شرکت‌ها: شرکت بازرگانی پارس آریا (حقوقی)، فروشگاه زنجیره‌ای رفاه (حقوقی)، علی محمدی (حقیقی)
+  • اشخاص: مهدی کریمی، زهرا حسینی، حسن علیپور، مریم عباسی، رضا صادقی
+  • تماس‌ها: ۱۰ تماس (تلفن/همراه/ایمیل/وب‌سایت/فکس) با برچسب و یادداشت
+  • قراردادها: ۱ کامل‌شده (گذشته)، ۲ فعال (امروز در بازه)
+  • پیش‌فاکتورها: ۱ پذیرفته‌شده، ۲ در جریان (با اقلام و محاسبه خودکار مجموع)
+  • فاکتورها: ۱ تسویه‌شده، ۱ پرداخت‌نشده، ۱ پرداخت جزئی، ۱ سررسید گذشته
+- بررسی گزارش‌ها (همه 200 OK):
+  • /api/performance (عملکرد تیم) ✓
+  • /api/performance/kpi-report (KPI) ✓
+  • /api/audit (ممیزی) ✓
+  • /api/iso30414/report (ISO) ✓
+  • /api/dashboard ✓
+  • /api/settings ✓
+  • /api/tasks ✓
+  • /api/customers/stats ✓
+  • /api/contracts + /active ✓
+  • /api/proformas + /in-progress ✓
+  • /api/invoices + /unpaid ✓
+  • /api/chat/channels ✓
+  • /api/permissions/catalog ✓
+  • /api/users ✓
+  • /api/time/entries + /timesheet ✓
+- رفع مشکل route conflict در Next.js (حذف /api/route.ts که با [[...path]] تداخل داشت)
+- آمار نهایی تأیید شد:
+  • قراردادهای فعال: ۲ از ۳ ✓
+  • پیش‌فاکتورهای ناتمام: ۲ از ۳ ✓
+  • فاکتورهای پرداخت‌نشده: ۳ از ۴ ✓
+  • مانده: ۱۳۶,۰۰۰,۰۰۰ ریال ✓
+- بسته نهایی آماده شد:
+  • PDF راهنمای کامل: download/YFG_Accounting_Desk_0305_UserGuide.pdf (۷۳KB، ۱۲ بخش)
+  • ZIP بسته: download/YFG_Accounting_Desk_0305.zip (۳۷۹KB، شامل source code)
+- اسکریپت seed به مسیر git-tracked کپی شد: yfg-accounting/scripts/seed_realistic_data.py
+
+Stage Summary:
+- نسخه 0.3.0.05 با داده‌های واقعی آماده دانلود
+- همه گزارش‌ها و endpoint‌ها کار می‌کنند
+- بسته شامل: راهنمای PDF + ZIP source code + اسکریپت seed
