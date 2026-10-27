@@ -1,0 +1,10 @@
+{
+  "name": "yfg-accounting-service",
+  "version": "0.3.0",
+  "private": true,
+  "scripts": {
+    "dev": "python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --proxy-headers --reload",
+    "start": "python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --proxy-headers",
+    "setup": "python3 -c \"import sys; sys.path.insert(0,'.'); from app.main import init_db; init_db(); print('DB initialized')\""
+  }
+}

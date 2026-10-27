@@ -1,0 +1,2 @@
+task_code,company_code,fiscal_period,title,description,priority,weight,due_date,assigned_username,scope_start,scope_end
+T-001,C-001,1405,نمونه کار,شرح نمونه,NORMAL,1,1405/08/15,employee1,1405/07/01,1405/07/30

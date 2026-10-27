@@ -1,0 +1,10 @@
+services:
+  yfg-accounting:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8090:8000"
+    volumes:
+      - ./data:/data
+    # Put this behind an HTTPS reverse proxy and the office VPN before remote use.
+    # Do not expose port 8090 directly to the public Internet.

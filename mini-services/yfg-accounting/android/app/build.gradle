@@ -1,0 +1,26 @@
+plugins { id 'com.android.application' }
+
+// Set YFG_WEB_URL to the HTTPS address of the office server before building.
+def webUrl = providers.gradleProperty('YFG_WEB_URL')
+    .orElse(providers.environmentVariable('YFG_WEB_URL'))
+    .orElse('https://replace-with-your-company-domain').get()
+
+android {
+    namespace 'com.yfg.accounting'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.yfg.accounting'
+        minSdk 27
+        targetSdk 35
+        versionCode 3
+        versionName '0.3.0'
+        buildConfigField 'String', 'WEB_APP_URL', '"' + webUrl.replace('\\', '\\\\').replace('"', '\\"') + '"'
+    }
+
+    buildFeatures { buildConfig true }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

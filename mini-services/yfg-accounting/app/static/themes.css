@@ -1,0 +1,665 @@
+/* YFG Theme System v2.0 — Based on Yasta template
+   5 themes: Teal, Emerald, Copper, Night, YFG
+   Dark, modern aesthetic with glassmorphism and gradient overlays
+*/
+
+:root {
+  /* Base shared variables */
+  --bg-darkest: #070c11;
+  --bg-dark: #0d1419;
+  --bg-card: rgba(255,255,255,0.03);
+  --bg-card-hover: rgba(255,255,255,0.05);
+  --border-subtle: rgba(255,255,255,0.08);
+  --border-hover: rgba(255,255,255,0.15);
+  --text-primary: #ffffff;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --font-main: Vazirmatn, 'Vazirmatn Fallback', system-ui, sans-serif;
+  --radius: 12px;
+  --radius-sm: 8px;
+  --radius-lg: 16px;
+  --shadow-glow: 0 0 40px rgba(0,0,0,0.4);
+  --transition: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ==================== TEAL THEME (تیل) ==================== */
+[data-theme="teal"] {
+  --accent: #0b8f89;
+  --accent-light: #14b8a6;
+  --accent-dark: #0f766e;
+  --accent-glow: rgba(11, 143, 137, 0.15);
+  --accent-text: #5eead4;
+  --gradient-hero: radial-gradient(80% 50% at 50% 0px, rgba(11, 143, 137, 0.15), transparent 60%);
+  --gradient-glow: radial-gradient(60% 50% at 80% 100%, rgba(11, 143, 137, 0.08), transparent 60%);
+}
+
+/* ==================== EMERALD THEME (زمردی) ==================== */
+[data-theme="emerald"] {
+  --accent: #10b981;
+  --accent-light: #34d399;
+  --accent-dark: #059669;
+  --accent-glow: rgba(16, 185, 129, 0.15);
+  --accent-text: #6ee7b7;
+  --gradient-hero: radial-gradient(80% 50% at 50% 0px, rgba(16, 185, 129, 0.12), transparent 60%);
+  --gradient-glow: radial-gradient(60% 50% at 80% 100%, rgba(251, 191, 36, 0.08), transparent 60%);
+}
+
+/* ==================== COPPER THEME (مسی) ==================== */
+[data-theme="copper"] {
+  --accent: #b87333;
+  --accent-light: #d4914a;
+  --accent-dark: #94602a;
+  --accent-glow: rgba(184, 115, 51, 0.15);
+  --accent-text: #e8b87a;
+  --gradient-hero: radial-gradient(80% 50% at 50% 0px, rgba(184, 115, 51, 0.15), transparent 60%);
+  --gradient-glow: radial-gradient(60% 50% at 80% 100%, rgba(217, 119, 6, 0.08), transparent 60%);
+}
+
+/* ==================== NIGHT THEME (شب) ==================== */
+[data-theme="night"] {
+  --accent: #6366f1;
+  --accent-light: #818cf8;
+  --accent-dark: #4f46e5;
+  --accent-glow: rgba(99, 102, 241, 0.12);
+  --accent-text: #a5b4fc;
+  --gradient-hero: radial-gradient(80% 50% at 50% 0px, rgba(99, 102, 241, 0.10), transparent 60%);
+  --gradient-glow: radial-gradient(60% 50% at 80% 100%, rgba(168, 85, 247, 0.06), transparent 60%);
+}
+
+/* ==================== YFG DEFAULT THEME ==================== */
+[data-theme="yfg"] {
+  --accent: #0b8f89;
+  --accent-light: #14b8a6;
+  --accent-dark: #0f766e;
+  --accent-glow: rgba(11, 143, 137, 0.15);
+  --accent-text: #5eead4;
+  --gradient-hero: radial-gradient(80% 50% at 50% 0px, rgba(11, 143, 137, 0.15), transparent 60%);
+  --gradient-glow: radial-gradient(60% 50% at 80% 100%, rgba(251, 191, 36, 0.06), transparent 60%);
+}
+
+/* ==================== GLOBAL DARK STYLES ==================== */
+body[data-yfg-theme] {
+  background: var(--bg-darkest) !important;
+  color: var(--text-primary) !important;
+  font-family: var(--font-main) !important;
+}
+
+/* Grid pattern background overlay */
+body[data-yfg-theme]::before {
+  content: '';
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-image: 
+    linear-gradient(to left, rgba(255,255,255,0.02) 1px, transparent 1px),
+    linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px);
+  background-size: 60px 60px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Hero gradient overlay on top */
+body[data-yfg-theme]::after {
+  content: '';
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 60vh;
+  background: var(--gradient-hero), var(--gradient-glow);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ==================== SIDEBAR / NAV ==================== */
+body[data-yfg-theme] .sidebar,
+body[data-yfg-theme] .app-shell > aside {
+  background: rgba(7, 12, 17, 0.95) !important;
+  backdrop-filter: blur(20px);
+  border-left: 1px solid var(--border-subtle);
+  position: relative;
+  z-index: 10;
+}
+
+body[data-yfg-theme] .brand,
+body[data-yfg-theme] .brand-mark {
+  color: var(--accent-text) !important;
+}
+
+body[data-yfg-theme] .brand strong {
+  color: var(--text-primary) !important;
+}
+
+body[data-yfg-theme] .brand span,
+body[data-yfg-theme] .workspace-label {
+  color: var(--text-muted) !important;
+}
+
+body[data-yfg-theme] .nav-item {
+  color: var(--text-secondary) !important;
+  background: transparent !important;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition);
+}
+
+body[data-yfg-theme] .nav-item:hover {
+  background: var(--bg-card-hover) !important;
+  color: var(--text-primary) !important;
+  border-color: var(--border-subtle);
+}
+
+body[data-yfg-theme] .nav-item.active {
+  background: var(--accent-glow) !important;
+  color: var(--accent-text) !important;
+  border-color: rgba(var(--accent-rgb), 0.3);
+}
+
+body[data-yfg-theme] .nav-icon {
+  color: var(--accent) !important;
+}
+
+body[data-yfg-theme] .nav-badge {
+  background: var(--accent) !important;
+  color: #fff !important;
+}
+
+/* ==================== MAIN CONTENT AREA ==================== */
+body[data-yfg-theme] .app-shell > main,
+body[data-yfg-theme] main {
+  background: transparent !important;
+  position: relative;
+  z-index: 1;
+}
+
+body[data-yfg-theme] h1,
+body[data-yfg-theme] h2,
+body[data-yfg-theme] h3,
+body[data-yfg-theme] h4 {
+  color: var(--text-primary) !important;
+}
+
+body[data-yfg-theme] .hint,
+body[data-yfg-theme] .muted {
+  color: var(--text-muted) !important;
+}
+
+body[data-yfg-theme] p {
+  color: var(--text-secondary);
+}
+
+/* ==================== CARDS ==================== */
+body[data-yfg-theme] .panel,
+body[data-yfg-theme] .table-card,
+body[data-yfg-theme] .card {
+  background: var(--bg-card) !important;
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: var(--radius) !important;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.3) !important;
+}
+
+body[data-yfg-theme] .panel:hover,
+body[data-yfg-theme] .table-card:hover {
+  border-color: var(--border-hover) !important;
+}
+
+body[data-yfg-theme] .panel-head {
+  border-bottom: 1px solid var(--border-subtle) !important;
+}
+
+/* ==================== TABLES ==================== */
+body[data-yfg-theme] .data-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+body[data-yfg-theme] .data-table thead th {
+  background: rgba(255,255,255,0.03) !important;
+  color: var(--text-secondary) !important;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border-subtle) !important;
+  padding: 12px 16px;
+}
+
+body[data-yfg-theme] .data-table tbody td {
+  color: var(--text-primary) !important;
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 12px 16px;
+}
+
+body[data-yfg-theme] .data-table tbody tr:hover {
+  background: var(--bg-card-hover) !important;
+}
+
+/* ==================== BUTTONS ==================== */
+body[data-yfg-theme] .btn {
+  border-radius: var(--radius) !important;
+  font-weight: 600;
+  transition: all var(--transition);
+  border: 1px solid transparent;
+}
+
+body[data-yfg-theme] .btn.primary {
+  background: var(--accent) !important;
+  color: #fff !important;
+  box-shadow: 0 4px 12px var(--accent-glow);
+}
+
+body[data-yfg-theme] .btn.primary:hover {
+  background: var(--accent-light) !important;
+  box-shadow: 0 6px 20px var(--accent-glow);
+  transform: translateY(-1px);
+}
+
+body[data-yfg-theme] .btn.soft {
+  background: var(--accent-glow) !important;
+  color: var(--accent-text) !important;
+  border-color: rgba(var(--accent-rgb), 0.2);
+}
+
+body[data-yfg-theme] .btn.soft:hover {
+  background: var(--accent-glow) !important;
+  border-color: var(--accent);
+}
+
+body[data-yfg-theme] .btn.small {
+  padding: 6px 14px;
+  font-size: 13px;
+}
+
+/* ==================== INPUTS / FIELDS ==================== */
+body[data-yfg-theme] .field,
+body[data-yfg-theme] input,
+body[data-yfg-theme] textarea,
+body[data-yfg-theme] select {
+  background: rgba(255,255,255,0.04) !important;
+  border: 1px solid var(--border-subtle) !important;
+  color: var(--text-primary) !important;
+  border-radius: var(--radius-sm) !important;
+  padding: 10px 14px;
+  transition: all var(--transition);
+}
+
+body[data-yfg-theme] .field:focus,
+body[data-yfg-theme] input:focus,
+body[data-yfg-theme] textarea:focus,
+body[data-yfg-theme] select:focus {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px var(--accent-glow);
+  outline: none;
+}
+
+body[data-yfg-theme] .field::placeholder,
+body[data-yfg-theme] input::placeholder {
+  color: var(--text-muted) !important;
+}
+
+body[data-yfg-theme] label {
+  color: var(--text-secondary) !important;
+  font-weight: 500;
+}
+
+/* ==================== STATUS BADGES ==================== */
+body[data-yfg-theme] .status {
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+body[data-yfg-theme] .status.ASSIGNED { background: rgba(59,130,246,0.15); color: #93c5fd; }
+body[data-yfg-theme] .status.IN_PROGRESS { background: rgba(245,158,11,0.15); color: #fcd34d; }
+body[data-yfg-theme] .status.SUBMITTED { background: rgba(6,182,212,0.15); color: #67e8f9; }
+body[data-yfg-theme] .status.NEEDS_REVIEW { background: rgba(249,115,22,0.15); color: #fdba74; }
+body[data-yfg-theme] .status.APPROVED { background: rgba(16,185,129,0.15); color: #6ee7b7; }
+body[data-yfg-theme] .status.APPROVED_WITH_EXCEPTION { background: rgba(234,179,8,0.15); color: #fde68a; }
+body[data-yfg-theme] .status.RETURNED { background: rgba(239,68,68,0.15); color: #fca5a5; }
+body[data-yfg-theme] .status.CANCELLED { background: rgba(100,116,139,0.15); color: #94a3b8; }
+
+/* ==================== AUTH PAGE ==================== */
+body[data-yfg-theme] .auth-wrap {
+  background: var(--bg-darkest) !important;
+}
+
+body[data-yfg-theme] .auth-card {
+  background: rgba(13, 20, 25, 0.95) !important;
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 25px 50px rgba(0,0,0,0.5);
+}
+
+body[data-yfg-theme] .auth-aside {
+  background: linear-gradient(135deg, var(--accent-dark), var(--bg-darkest));
+}
+
+body[data-yfg-theme] .eyebrow {
+  color: var(--accent-text) !important;
+}
+
+body[data-yfg-theme] .auth-foot {
+  color: var(--text-muted) !important;
+}
+
+/* ==================== MODALS ==================== */
+body[data-yfg-theme] .modal-overlay,
+body[data-yfg-theme] #modalRoot > div {
+  background: rgba(7, 12, 17, 0.8) !important;
+  backdrop-filter: blur(8px);
+}
+
+body[data-yfg-theme] .modal,
+body[data-yfg-theme] #modalRoot .modal-content {
+  background: rgba(13, 20, 25, 0.98) !important;
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 25px 50px rgba(0,0,0,0.5);
+}
+
+/* ==================== TOAST ==================== */
+body[data-yfg-theme] #toast {
+  background: var(--accent-dark) !important;
+  color: #fff !important;
+  border-radius: var(--radius);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+}
+
+/* ==================== ALERTS ==================== */
+body[data-yfg-theme] .alert {
+  border-radius: var(--radius-sm);
+  padding: 12px 16px;
+}
+
+body[data-yfg-theme] .alert.error {
+  background: rgba(239,68,68,0.1);
+  color: #fca5a5;
+  border: 1px solid rgba(239,68,68,0.2);
+}
+
+body[data-yfg-theme] .alert.success {
+  background: rgba(16,185,129,0.1);
+  color: #6ee7b7;
+  border: 1px solid rgba(16,185,129,0.2);
+}
+
+/* ==================== SCROLLBAR ==================== */
+body[data-yfg-theme] ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+body[data-yfg-theme] ::-webkit-scrollbar-track {
+  background: var(--bg-darkest);
+}
+
+body[data-yfg-theme] ::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.1);
+  border-radius: 4px;
+}
+
+body[data-yfg-theme] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.2);
+}
+
+/* ==================== LINKS ==================== */
+body[data-yfg-theme] a,
+body[data-yfg-theme] .text-link {
+  color: var(--accent-text) !important;
+  text-decoration: none;
+  transition: color var(--transition);
+}
+
+body[data-yfg-theme] a:hover,
+body[data-yfg-theme] .text-link:hover {
+  color: var(--accent-light) !important;
+}
+
+/* ==================== CHART AREA ==================== */
+body[data-yfg-theme] #chartArea {
+  position: relative;
+  z-index: 1;
+}
+
+body[data-yfg-theme] #chartArea > div {
+  background: rgba(13, 20, 25, 0.6) !important;
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--border-subtle);
+}
+
+/* ==================== KANBAN ==================== */
+body[data-yfg-theme] .kanban-column {
+  min-height: 100px;
+}
+
+body[data-yfg-theme] .kanban-card {
+  background: rgba(255,255,255,0.04) !important;
+  border: 1px solid var(--border-subtle);
+  backdrop-filter: blur(10px);
+}
+
+body[data-yfg-theme] .kanban-card:hover {
+  background: var(--bg-card-hover) !important;
+  border-color: var(--accent);
+  box-shadow: 0 4px 12px var(--accent-glow);
+}
+
+/* ==================== TIMER WIDGET ==================== */
+body[data-yfg-theme] #timerWidget {
+  background: var(--accent-dark) !important;
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--border-hover);
+}
+
+/* ==================== DECISION BOX ==================== */
+body[data-yfg-theme] .decision-box {
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+body[data-yfg-theme] .section-title {
+  color: var(--text-primary) !important;
+  font-weight: 600;
+}
+
+/* ==================== REPORT GRID ==================== */
+body[data-yfg-theme] .report-grid {
+  display: grid;
+  gap: 12px;
+}
+
+body[data-yfg-theme] .report-metric {
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+}
+
+body[data-yfg-theme] .report-metric small {
+  color: var(--text-muted) !important;
+}
+
+body[data-yfg-theme] .report-metric b {
+  color: var(--text-primary) !important;
+}
+
+/* ==================== THEME SWITCHER ==================== */
+.yfg-theme-switcher {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 9999;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  background: rgba(7, 12, 17, 0.95);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--border-subtle);
+  border-radius: 100px;
+  padding: 8px 12px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+}
+
+.yfg-theme-switcher-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: 8px;
+  white-space: nowrap;
+}
+
+.yfg-theme-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: all var(--transition);
+  position: relative;
+}
+
+.yfg-theme-btn:hover {
+  transform: scale(1.15);
+}
+
+.yfg-theme-btn.active {
+  border-color: #fff;
+  box-shadow: 0 0 12px currentColor;
+}
+
+.yfg-theme-btn[data-theme-val="teal"] { background: #0b8f89; color: #0b8f89; }
+.yfg-theme-btn[data-theme-val="emerald"] { background: #10b981; color: #10b981; }
+.yfg-theme-btn[data-theme-val="copper"] { background: #b87333; color: #b87333; }
+.yfg-theme-btn[data-theme-val="night"] { background: #6366f1; color: #6366f1; }
+.yfg-theme-btn[data-theme-val="yfg"] { background: linear-gradient(135deg, #0b8f89, #f59e0b); color: #0b8f89; }
+
+/* ==================== NOTIFICATION BADGES ==================== */
+body[data-yfg-theme] .notice-item {
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+}
+
+body[data-yfg-theme] .history-item {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+body[data-yfg-theme] .tag {
+  background: var(--accent-glow);
+  color: var(--accent-text);
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+body[data-yfg-theme] .pill-row span,
+body[data-yfg-theme] .pill {
+  background: var(--bg-card-hover);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 20px;
+  padding: 4px 12px;
+  font-size: 12px;
+}
+
+/* ==================== FORM GRID ==================== */
+body[data-yfg-theme] .form-grid {
+  display: grid;
+  gap: 12px;
+}
+
+body[data-yfg-theme] .check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+body[data-yfg-theme] .check-row input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 18px;
+  height: 18px;
+}
+
+body[data-yfg-theme] .file-drop {
+  background: var(--bg-card);
+  border: 2px dashed var(--border-hover);
+  border-radius: var(--radius);
+  padding: 20px;
+  text-align: center;
+  transition: all var(--transition);
+}
+
+body[data-yfg-theme] .file-drop:hover {
+  border-color: var(--accent);
+  background: var(--accent-glow);
+}
+
+/* ==================== TABS ==================== */
+body[data-yfg-theme] .tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 12px;
+}
+
+body[data-yfg-theme] .tab {
+  padding: 8px 16px;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all var(--transition);
+  border-radius: 8px 8px 0 0;
+}
+
+body[data-yfg-theme] .tab.active {
+  color: var(--accent-text);
+  border-bottom-color: var(--accent);
+  background: var(--accent-glow);
+}
+
+body[data-yfg-theme] .tab:hover {
+  color: var(--text-primary);
+  background: var(--bg-card-hover);
+}
+
+/* ==================== ISO 30414 VIEW ==================== */
+body[data-yfg-theme] #view-iso30414 > div > div {
+  background: rgba(13, 20, 25, 0.6) !important;
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--border-subtle) !important;
+}
+
+/* ==================== ANIMATIONS ==================== */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+body[data-yfg-theme] .view:not(.hidden) {
+  animation: fadeIn 0.3s ease-out;
+}
+
+body[data-yfg-theme] .panel,
+body[data-yfg-theme] .table-card {
+  animation: fadeIn 0.4s ease-out;
+}
+
+/* ==================== MOBILE ==================== */
+@media (max-width: 768px) {
+  body[data-yfg-theme] .yfg-theme-switcher {
+    bottom: 10px;
+    right: 10px;
+    padding: 6px 8px;
+  }
+  
+  body[data-yfg-theme] .yfg-theme-btn {
+    width: 22px;
+    height: 22px;
+  }
+  
+  body[data-yfg-theme] .yfg-theme-switcher-label {
+    display: none;
+  }
+}

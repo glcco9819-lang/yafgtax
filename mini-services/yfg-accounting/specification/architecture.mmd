@@ -1,0 +1,12 @@
+flowchart TD
+    U[مدیر و کارمند] --> WEB[رابط وب فارسی RTL]
+    WEB --> API[FastAPI]
+    API --> AUTH[احراز هویت و مجوز]
+    API --> DB[(PostgreSQL محلی)]
+    API --> FS[(ذخیره فایل محلی)]
+    API --> JOB[Worker پردازش]
+    JOB --> XLS[اعتبارسنجی و نرمال‌سازی Excel]
+    XLS --> REC[موتور تطبیق نسخه‌دار]
+    REC --> DB
+    API --> AUD[ممیزی و اعلان مجاز]
+    AUD --> DB
