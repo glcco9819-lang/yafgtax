@@ -185,3 +185,27 @@ Stage Summary:
 - تب تنظیمات حالا حرفه‌ای: ۸ زیرتب با ۳ زیرتب جدید (تعریف شرکت، کاربران، نقش‌ها و دسترسی‌ها)
 - ۳۰ مجوز ریزفیلد سمت سرور اعمال می‌شود؛ تغییر دسترسی فوراً نشست کاربر را باطل می‌کند
 - همه‌چیز روی GitHub (commit d4d8b68)؛ سرورها سالم؛ watchdog فعال
+
+---
+Task ID: reports-hub-0301
+Agent: main
+Task: تب گزارشات + رفع دیده‌نشدن تب تنظیمات + رمز ۴ نویسه + نسخه‌گذاری 0.3.0.01 + push
+
+Work Log:
+- ریشه‌یابی مشکل «تب تنظیمات دیده نمی‌شود»: public/static یک کپی قدیمی جدا از YFG بود (آخرین sync قبل از commit تنظیمات!) — Next.js همیشه نسخه کهنه سرو می‌کرد
+- راه‌حل: public/static با نسخه تازه جایگزین شد + اسکریپت scripts/sync_static.sh ساخته شد (بعد از هر تغییر استاتیک اجرا شود)
+- nav کاملاً استاتیک شد در index.html: شرکت‌ها/کاربران/گزارش عملکرد تیم/گزارش ممیزی از سطح بالا حذف → زیرمجموعه تنظیمات و گزارشات؛ کانبان/تایم/گفتگو/اتوماسیون/ISO هم استاتیک شدند
+- تب گزارشات (enhanced.js): renderReports با ۴ زیرگزارش — team (کارت امتیاز تسک‌ها)، employees (جدید: ترکیب نمره تسک ۵۰٪ + KPI ۵۰٪ با رتبه‌بندی)، audit (ممیزی با دکمه به‌روزرسانی)، kpi (renderKPIReport با پارامتر target اختیاری)
+- رفع تداخل scope: renderKPIReport داخل IIFE بود → window.__renderKPIReport/__userKPIDetail expose شد؛ renderReports و window.__renderSettings در global scope
+- app.js: renderView با null-guard + مسیرهای reports/settings/kanban/... + fallback retry؛ titles جدید؛ دکمه سریع «مدیریت شرکت‌ها» → settings
+- رمز عبور: min 12→4 در SetupModel/UserCreate (Pydantic)، دو چک دستی backend، فرم setup، openNewUser، مودال کاربر rich، پرامپت تغییر رمز
+- نسخه: سایدبار «نسخه 0.3.0.01» با id=appVersion؛ /api/status version=0.3.0.01؛ SW v13→v14؛ register با updateViaCache:none + کوئری ?v=14؛ asset URLs ?v=0.3.0.01
+- عنوان گزارش KPI داخل تب گزارشات به «🎯 گزارش KPI» اصلاح شد (قبلاً «گزارش عملکرد تیم» بود و تکراری می‌شد)
+- تست E2E مرورگر: login → گزارشات با ۴ زیرتب (۱۹ سطر ممیزی، جدول کارکنان با هدرهای کامل، KPI stats) → تنظیمات با ۸ زیرتب → تغییر رمز ۴ نویسه از API → ساخت کاربر با رمز ۴ نویسه → همه پاس
+- پاکسازی: کاربران تست testadmin/pwtest4 از DB حذف شدند
+- Commit 206eb27 به yafgtax.git push شد (توکن از remote پاک شد)
+
+Stage Summary:
+- نسخه 0.3.0.01 — هر تغییر بعدی = 0.3.0.02 و به همین ترتیب
+- ساختار سایدبار: نمای کلی، تسک‌ها، درخواست‌ها، کارکرد، ثبت عملکرد، گزارشات، تنظیمات، کانبان، تایم ترکینگ، گفتگو، اتوماسیون، ISO
+- نکته مهم نگهداری: بعد از تغییر فایل‌های استاتیک باید scripts/sync_static.sh اجرا شود (یا watcher اضافه شود)
