@@ -1011,7 +1011,7 @@ def reconcile_detailed(sub_rows: list[dict[str, str]], ref_rows: list[dict[str, 
 class SetupModel(BaseModel):
     name: str = Field(min_length=2, max_length=100)
     username: str = Field(min_length=3, max_length=50)
-    password: str = Field(min_length=12, max_length=200)
+    password: str = Field(min_length=4, max_length=200)
 
 
 class LoginModel(BaseModel):
@@ -1025,7 +1025,7 @@ class UserCreate(BaseModel):
     last_name: str = Field(default="", max_length=80)
     phone: str = Field(default="", max_length=30)
     username: str = Field(min_length=3, max_length=50)
-    password: str = Field(min_length=12, max_length=200)
+    password: str = Field(min_length=4, max_length=200)
     password2: str | None = Field(default=None, max_length=200)
     role: str = "EMPLOYEE"
     company_ids: list[str] = []
@@ -1196,7 +1196,7 @@ def service_worker():
 @app.get("/api/status")
 def status():
     with db() as con:
-        return {"setup_needed": con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0, "product": "YFG Accounting Desk", "version": "0.3.0"}
+        return {"setup_needed": con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0, "product": "YFG Accounting Desk", "version": "0.3.0.01"}
 
 
 @app.post("/api/setup")
@@ -1496,8 +1496,8 @@ def update_user(user_id: str, payload: UserUpdate, request: Request):
         if payload.password is not None:
             if payload.password2 is not None and payload.password != payload.password2:
                 raise HTTPException(400, "رمز عبور و تکرار آن یکسان نیستند")
-            if len(payload.password) < 12:
-                raise HTTPException(400, "رمز عبور باید حداقل ۱۲ نویسه باشد")
+            if len(payload.password) < 4:
+                raise HTTPException(400, "رمز عبور باید حداقل ۴ نویسه باشد")
             updates["password_hash"] = password_hash(payload.password)
         if updates:
             set_clause = ", ".join(f"{k}=?" for k in updates)
@@ -1632,8 +1632,8 @@ class PasswordChange(BaseModel):
 @app.post("/api/auth/change-password")
 def change_password(payload: PasswordChange, request: Request):
     user = current_user(request)
-    if len(payload.new_password) < 12:
-        raise HTTPException(400, "رمز جدید باید حداقل ۱۲ نویسه باشد")
+    if len(payload.new_password) < 4:
+        raise HTTPException(400, "رمز جدید باید حداقل ۴ نویسه باشد")
     with db() as con:
         stored = con.execute("SELECT password_hash FROM users WHERE id=?", (user["id"],)).fetchone()
         if not stored or not password_ok(payload.old_password, stored["password_hash"]):

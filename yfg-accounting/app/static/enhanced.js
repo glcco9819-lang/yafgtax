@@ -10,20 +10,30 @@
   let timerStart = null;
   let currentChannel = null;
 
-  // Retry mechanism - keeps trying until DOM is ready
+  // Retry mechanism - runs immediately (defer scripts run after DOM parse), with fallback retries
   let retries = 0;
   const tryInit = setInterval(() => {
     retries++;
     if (retries > 50) { clearInterval(tryInit); return; }
     const nav = document.getElementById('nav');
     const main = document.querySelector('main');
-    if (nav && nav.children.length > 0 && main) {
+    if (nav && main) {
       // Check if already initialized
-      if (nav.querySelector('[data-view="kanban"]')) { clearInterval(tryInit); return; }
+      if (nav.querySelector('[data-init-enhanced]')) { clearInterval(tryInit); return; }
       clearInterval(tryInit);
+      nav.setAttribute('data-init-enhanced', '1');
       init();
     }
-  }, 200);
+  }, 120);
+  if (document.readyState !== 'loading') {
+    const nav = document.getElementById('nav');
+    const main = document.querySelector('main');
+    if (nav && main && !nav.querySelector('[data-init-enhanced]')) {
+      clearInterval(tryInit);
+      nav.setAttribute('data-init-enhanced', '1');
+      setTimeout(init, 0);
+    }
+  }
 
   function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function toast(msg, err) {
@@ -59,24 +69,20 @@
   }
 
   // ============ Nav Items ============
+  // All primary nav items now live statically in index.html (so they always show,
+  // even if this file is served stale from cache). Only safety-net additions remain.
   function addNavItems() {
     const nav = document.getElementById('nav');
     if (!nav) return;
-    const isAdmin = typeof state !== 'undefined' && (state.me?.role === 'ADMIN' || state.me?.role === 'CEO');
     const items = [
-      {view: 'kanban', icon: '▦', label: 'کانبان', admin: false},
       {view: 'kpi-report', icon: '🎯', label: 'گزارش KPI', admin: true},
-      {view: 'time', icon: '◷', label: 'تایم ترکینگ', admin: false},
-      {view: 'chat', icon: '✉', label: 'گفتگو', admin: false},
-      {view: 'automations', icon: '⚙', label: 'اتوماسیون', admin: true},
-      {view: 'iso30414', icon: '📊', label: 'گزارش ISO ۳۰۴۱۴', admin: true},
-      {view: 'settings', icon: '🔧', label: 'تنظیمات', admin: true},
     ];
     items.forEach(item => {
       if (nav.querySelector(`[data-view="${item.view}"]`)) return;
       const btn = document.createElement('button');
       btn.className = 'nav-item' + (item.admin ? ' admin-only' : '');
       btn.dataset.view = item.view;
+      btn.style.display = 'none'; // reports live under the گزارشات tab now
       btn.innerHTML = `<span class="nav-icon">${item.icon}</span> ${item.label}`;
       btn.addEventListener('click', () => {
         document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
@@ -115,8 +121,8 @@
     }
   }
 
-  // Also override app.js renderPerformance to call KPI report (for nav-item "گزارش عملکرد تیم")
-  window.renderPerformance = function() { renderKPIReport(); };
+  // Also override app.js renderPerformance to keep legacy view working (score cards)
+  // The گزارشات tab renders its own richer sub-reports; no override needed here.
 
   // ============ Timer Widget ============
   function addTimerWidget() {
@@ -286,10 +292,12 @@
     } catch(e) { section.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
   }
 
-  // Expose for task detail
+  // Expose for task detail + global-scope reports hub
   window.__startTimer = startTimer;
   window.__stopTimer = stopTimer;
   window.__enhancedShowView = showView;
+  window.__renderKPIReport = renderKPIReport;
+  window.__userKPIDetail = (uid) => userKPIDetail(uid);
 
   // ============ USER MANAGEMENT (edit, access, deactivate) ============
   async function renderUserManagement() {
@@ -329,8 +337,8 @@
     btn.addEventListener('click', () => {
       const oldPass = prompt('رمز فعلی:');
       if (!oldPass) return;
-      const newPass = prompt('رمز جدید (حداقل ۱۲ نویسه):');
-      if (!newPass || newPass.length < 12) { toast('رمز باید حداقل ۱۲ نویسه باشد', true); return; }
+      const newPass = prompt('رمز جدید (حداقل ۴ نویسه):');
+      if (!newPass || newPass.length < 4) { toast('رمز باید حداقل ۴ نویسه باشد', true); return; }
       const confirmPass = prompt('تکرار رمز جدید:');
       if (newPass !== confirmPass) { toast('رمزها مطابقت ندارند', true); return; }
       api('/auth/change-password', {method:'POST', body: JSON.stringify({old_password: oldPass, new_password: newPass})})
@@ -353,12 +361,16 @@
   // defined in settings → KPIs tab.
   let kpiReportPeriod = '';
   let kpiReportRole = 'EMPLOYEE';
+  let kpiReportTarget = null;
 
-  async function renderKPIReport() {
-    // Try to render into #view-performance first (managed by app.js nav)
-    // If user clicked on the dedicated KPI nav-item, render into #view-kpi-report
-    let section = document.getElementById('view-performance');
-    if (!section) section = document.getElementById('view-kpi-report');
+  async function renderKPIReport(target) {
+    // target: optional container (e.g. the گزارشات sub-tab content div)
+    if (target) kpiReportTarget = target;
+    let section = kpiReportTarget;
+    if (!section || !section.isConnected) {
+      kpiReportTarget = null;
+      section = document.getElementById('view-kpi-report') || document.getElementById('view-performance');
+    }
     if (!section) return;
     const isAdmin = typeof state !== 'undefined' && (state.me?.role === 'ADMIN' || state.me?.role === 'CEO');
     if (!isAdmin) {
@@ -379,7 +391,7 @@
       section.innerHTML = `
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px;">
           <div>
-            <h1>🎯 گزارش عملکرد تیم (مبتنی بر KPI)</h1>
+            <h1>🎯 گزارش KPI</h1>
             <p class="hint" style="margin-top:4px;">امتیاز هر کارمند از مجموع وزن‌دار شاخص‌های فعال محاسبه می‌شود. شاخص‌ها در تب تنظیمات قابل ویرایش هستند.</p>
           </div>
           <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
@@ -657,6 +669,129 @@
   // ============ PERFORMANCE VIEW (ثبت عملکرد) - LEGACY ============
   // (Removed — view-performance-entries is now managed by renderPerformanceEntries in performance.js.
   //  Score/delegate/history buttons can be added to that view in future if needed.)
+
+  // ============ REPORTS HUB (تب گزارشات) ============
+  // همه گزارش‌های مدیریتی: عملکرد تیم، عملکرد کارکنان، ممیزی و KPI
+  let reportsTab = 'team';
+  const REPORT_TABS = [
+    {key:'team', label:'گزارش عملکرد تیم', icon:'▥'},
+    {key:'employees', label:'عملکرد کارکنان', icon:'♙'},
+    {key:'audit', label:'گزارش ممیزی', icon:'⌁'},
+    {key:'kpi', label:'گزارش KPI', icon:'🎯'},
+  ];
+
+  async function renderReports() {
+    const section = document.getElementById('view-reports');
+    if (!section) return;
+    section.innerHTML = `
+      <h1>گزارشات</h1>
+      <p class="hint" style="margin-bottom:16px;">همه گزارش‌های مدیریتی دفتر در یک‌جا — عملکرد تیم، عملکرد کارکنان، ممیزی و شاخص‌های کلیدی عملکرد.</p>
+      <div class="tabs" style="margin-bottom:16px;flex-wrap:wrap;">
+        ${REPORT_TABS.map(t => `<button class="tab ${reportsTab===t.key?'active':''}" data-rtab="${t.key}">${t.icon} ${t.label}</button>`).join('')}
+      </div>
+      <div id="reportsContent"></div>`;
+    section.querySelectorAll('[data-rtab]').forEach(b => b.addEventListener('click', () => { reportsTab = b.dataset.rtab; renderReports(); }));
+    const content = document.getElementById('reportsContent');
+    if (!content) return;
+    try {
+      if (reportsTab === 'team') await renderTeamPerf(content);
+      else if (reportsTab === 'employees') await renderEmployeesPerf(content);
+      else if (reportsTab === 'audit') await renderAuditReport(content);
+      else if (reportsTab === 'kpi') await window.__renderKPIReport(content);
+    } catch(e) { content.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
+  }
+  window.__renderReports = renderReports;
+
+  // --- زیرگزارش ۱: گزارش عملکرد تیم (نمره تسک‌ها: ساده/وزنی) ---
+  async function renderTeamPerf(container) {
+    const rows = await api('/performance');
+    container.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+        <div><h3 style="margin:0;">▥ گزارش عملکرد تیم</h3><p class="hint" style="margin-top:2px;">نمره‌های ثبت‌شده در «تصمیم مدیر» همراه با حجم کار و تأخیر — میانگین‌ها فقط از تسک‌های دارای نمره محاسبه شده‌اند.</p></div>
+        <span class="tag">نمره‌ها تصمیم خودکار نیستند</span>
+      </div>
+      <div class="panel">
+        <div class="score-card header"><span>کارمند</span><span>تسک</span><span>تکمیل</span><span>عقب‌افتاده</span><span>میانگین ساده / وزنی</span></div>
+        ${rows.length?rows.map(r=>`<div class="score-card"><b>${esc(r.name)}</b><span>${num(r.total)}</span><span>${num(r.completed)}</span><span>${num(r.late)}</span><span class="score">${r.simple_score??'—'} <small style="font-size:9px;color:#819196">/ ${r.weighted_score??'—'}</small></span></div>`).join(''):empty('کارمندی ثبت نشده است','با واگذاری تسک و ثبت نمره، گزارش ساخته می‌شود.')}
+      </div>
+      <p class="hint" style="margin-top:12px;">گزارش فعلی بر اساس نمره‌های واردشده در تصمیم مدیر است. نمرهٔ عملکرد خودکار از تعداد اختلاف‌های Excel ساخته نمی‌شود. برای ارزیابی وزن‌دار به زیرگزارش «گزارش KPI» بروید.</p>`;
+  }
+
+  // --- زیرگزارش ۲: عملکرد کارکنان (ترکیب تسک‌ها + امتیاز KPI) ---
+  async function renderEmployeesPerf(container) {
+    const [perfRows, kpiData] = await Promise.all([
+      api('/performance'),
+      api('/performance/kpi-report?role=EMPLOYEE').catch(() => ({employees: []})),
+    ]);
+    const kpiByUser = {};
+    (kpiData.employees || []).forEach(e => { kpiByUser[e.user_id] = e; });
+    const merged = perfRows.map(r => {
+      const k = kpiByUser[r.id];
+      const taskPart = r.simple_score != null ? r.simple_score : (r.weighted_score != null ? r.weighted_score : 0);
+      const kpiPart = k ? k.total_score : null;
+      const combined = kpiPart != null ? Math.round(taskPart * 0.5 + kpiPart * 0.5) : (r.simple_score != null ? Math.round(taskPart) : null);
+      return {...r, kpi_score: kpiPart, kpi_grade: k?.grade || null, combined};
+    }).sort((a, b) => (b.combined ?? -1) - (a.combined ?? -1));
+    const GRADE_COLORS = {'عالی':'#10b981','خوب':'#0b8f89','متوسط':'#f59e0b','ضعیف':'#ef4444'};
+    container.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+        <div><h3 style="margin:0;">♙ عملکرد کارکنان</h3><p class="hint" style="margin-top:2px;">ترکیب نمرهٔ تسک‌ها (۵۰٪) و امتیاز KPI (۵۰٪) برای هر کارمند — مرتب‌شده بر اساس امتیاز کل.</p></div>
+        <span class="tag">${merged.length} کارمند</span>
+      </div>
+      <div class="table-card" style="overflow-x:auto;">
+        <table class="data-table">
+          <thead><tr><th>#</th><th>کارمند</th><th>تسک‌ها</th><th>تکمیل‌شده</th><th>عقب‌افتاده</th><th>نمره تسک</th><th>امتیاز KPI</th><th>امتیاز کل</th><th>عملیات</th></tr></thead>
+          <tbody>
+            ${merged.map((r, i) => `
+              <tr>
+                <td>${num(i + 1)}</td>
+                <td><b>${esc(r.name)}</b></td>
+                <td>${num(r.total)}</td>
+                <td><span style="color:#10b981;">${num(r.completed)}</span></td>
+                <td><span style="color:${r.late > 0 ? '#ef4444' : '#64748b'};">${num(r.late)}</span></td>
+                <td>${r.simple_score ?? '—'} <small style="color:#819196;">/ ${r.weighted_score ?? '—'}</small></td>
+                <td>${r.kpi_score != null ? `<b style="color:${GRADE_COLORS[r.kpi_grade] || '#64748b'};">${r.kpi_score}</b><small style="color:#64748b;"> /۱۰۰</small> ${r.kpi_grade ? `<span class="pill" style="background:${GRADE_COLORS[r.kpi_grade] || '#94a3b8'};color:#fff;padding:1px 8px;border-radius:999px;font-size:10px;">${esc(r.kpi_grade)}</span>` : ''}` : '<span style="color:#94a3b8;">—</span>'}</td>
+                <td>
+                  ${r.combined != null ? `<div style="display:flex;align-items:center;gap:8px;">
+                    <div style="width:70px;height:8px;background:#f1f5f9;border-radius:4px;overflow:hidden;"><div style="width:${Math.min(100, r.combined)}%;height:100%;background:#0b8f89;"></div></div>
+                    <b>${num(r.combined)}</b><small style="color:#64748b;">/۱۰۰</small></div>` : '<span style="color:#94a3b8;">—</span>'}
+                </td>
+                <td>
+                  <div style="display:flex;gap:4px;flex-wrap:wrap;">
+                    ${r.kpi_score != null ? `<button class="btn soft small" onclick="window.__userKPIDetail('${r.id}')">🎯 KPI</button>` : ''}
+                    <button class="btn soft small" onclick="window.__empTaskHistory('${r.id}', '${esc(r.name)}')">✓ تسک‌ها</button>
+                  </div>
+                </td>
+              </tr>`).join('') || '<tr><td colspan="9" style="text-align:center;padding:20px;color:#64748b;">کارمندی ثبت نشده است</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+      <p class="hint" style="margin-top:12px;">💡 امتیاز کل = میانگین نمره تسک‌ها × ۵۰٪ + امتیاز KPI × ۵۰٪. اگر شاخصی تعریف نشده باشد، امتیاز کل برابر نمره تسک‌ها است. جزئیات شاخص‌ها در زیرگزارش «گزارش KPI».</p>`;
+    window.__empTaskHistory = async (userId, name) => {
+      try {
+        const tasks = (state.tasks || []).filter(t => t.assignee_id === userId);
+        const rows = tasks.slice(0, 20).map(t => `<tr><td><b>${esc(t.title)}</b><div class="task-sub">${esc(t.company_name)}</div></td><td>${statusTag(t.status)}</td><td>${num(t.progress)}٪</td><td>${dateFmt(t.due_date)}</td></tr>`).join('');
+        modal(`تسک‌های ${name}`, 'آخرین تسک‌های واگذارشده به این کارمند', `<div class="table-card"><table class="data-table"><thead><tr><th>عنوان</th><th>وضعیت</th><th>پیشرفت</th><th>مهلت</th></tr></thead><tbody>${rows || '<tr><td colspan="4" style="text-align:center;padding:16px;color:#64748b;">تسکی یافت نشد</td></tr>'}</tbody></table></div>`, {wide:true});
+      } catch (e) { toast(e.message, true); }
+    };
+  }
+
+  // --- زیرگزارش ۳: گزارش ممیزی ---
+  async function renderAuditReport(container) {
+    const rows = await api('/audit');
+    container.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+        <div><h3 style="margin:0;">⌁ گزارش ممیزی</h3><p class="hint" style="margin-top:2px;">ردیابی تغییرات حساس و عملیات کاربران — آخرین ۲۰۰ رویداد.</p></div>
+        <button class="btn soft small" onclick="window.__refreshAuditReport()">↺ به‌روزرسانی</button>
+      </div>
+      <div class="table-card" style="overflow-x:auto;">
+        <table class="data-table">
+          <thead><tr><th>زمان</th><th>کاربر</th><th>عملیات</th><th>نوع رکورد</th><th>شناسه</th><th>جزئیات</th></tr></thead>
+          <tbody>${rows.length?rows.map(r=>`<tr><td>${timeFmt(r.created_at)}</td><td>${esc(r.actor_name||'سیستم')}</td><td><span class="tag">${esc(r.action)}</span></td><td>${esc(r.entity_type)}</td><td class="task-sub">${esc(r.entity_id||'—')}</td><td style="max-width:320px;font-size:11px;word-break:break-word;">${esc(JSON.stringify(r.details))}</td></tr>`).join(''):`<tr><td colspan="6">${empty('رویدادی ثبت نشده است')}</td></tr>`}</tbody>
+        </table>
+      </div>`;
+    window.__refreshAuditReport = () => renderAuditReport(container);
+  }
 
   // ============ SETTINGS VIEW ============
   let settingsTab = 'companies2';
@@ -1226,11 +1361,11 @@ async function __userForm(id) {
     </div>
     ${id ? `
     <div class="form-grid">
-      ${__field('رمز عبور جدید (اختیاری)', 'password', '', { type: 'password', placeholder: 'حداقل ۱۲ نویسه' })}
+      ${__field('رمز عبور جدید (اختیاری)', 'password', '', { type: 'password', placeholder: 'حداقل ۴ نویسه' })}
       ${__field('تایید رمز عبور', 'password2', '', { type: 'password' })}
     </div>` : `
     <div class="form-grid">
-      ${__field('رمز عبور *', 'password', '', { type: 'password', required: true, placeholder: 'حداقل ۱۲ نویسه' })}
+      ${__field('رمز عبور *', 'password', '', { type: 'password', required: true, placeholder: 'حداقل ۴ نویسه' })}
       ${__field('تایید رمز *', 'password2', '', { type: 'password', required: true })}
     </div>`}
     <label style="display:flex;flex-direction:column;gap:4px;font-size:13px;font-weight:600;color:#334155;">نقش
@@ -1246,7 +1381,7 @@ async function __userForm(id) {
     </div>
     <button class="btn primary">${id ? 'ذخیره تغییرات' : 'ایجاد کاربر'}</button>
   </form>`;
-  modal(id ? '✎ ویرایش کاربر' : '＋ کاربر جدید', 'رمز حداقل ۱۲ نویسه. نام کاربری یکتا باشد.', body);
+  modal(id ? '✎ ویرایش کاربر' : '＋ کاربر جدید', 'رمز حداقل ۴ نویسه. نام کاربری یکتا باشد.', body);
   document.getElementById('userForm2').addEventListener('submit', async e => {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
@@ -1391,12 +1526,14 @@ window.__openPerms = (userId) => {
 // ---------------- nav overrides + permission gating ----------------
 window.renderUsers = function() { return renderUserManagement(); };
 window.renderCompanies = function() { return renderCompanyManagement(); };
+window.__renderSettings = renderSettings;
 
 const __NAV_PERMS = {
   audit: 'audit.view',
   users: 'users.view',
   companies: 'companies.view',
   performance: 'reports.kpi',
+  reports: 'audit.view',
   'kpi-report': 'reports.kpi',
   iso30414: 'reports.iso',
   automations: 'automations.manage',
