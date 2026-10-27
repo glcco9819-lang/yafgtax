@@ -1,5 +1,5 @@
-// YFG Service Worker v14 — version 0.3.0.01 — static nav (گزارشات + تنظیمات)
-const CACHE='yfg-desk-v14';
+// YFG Service Worker v15 — version 0.3.0.02 — full chat messenger + customers tab
+const CACHE='yfg-desk-v15';
 const ASSETS=['/','/static/style.css','/static/themes.css','/static/app.js','/static/performance.js','/static/enhanced.js','/static/themes.js','/static/icon.svg','/static/icon-192.png','/static/icon-512.png','/manifest.webmanifest'];
 
 self.addEventListener('install', e => e.waitUntil(

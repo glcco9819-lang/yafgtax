@@ -24,11 +24,19 @@ from pydantic import BaseModel, Field
 ROOT = Path(__file__).resolve().parent.parent
 DATA = Path(os.getenv("YFG_DATA_DIR", ROOT / "data")).resolve()
 FILES = DATA / "files"
+ATTACHMENTS_DIR = DATA / "attachments"
 DB_PATH = DATA / "yfg.sqlite3"
 MAX_UPLOAD = 20 * 1024 * 1024
+CHAT_ATTACHMENT_MAX = 25 * 1024 * 1024
+CHAT_ATTACHMENT_ALLOWED = {
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
+    ".pdf", ".txt", ".csv", ".xlsx", ".xls", ".docx", ".doc", ".pptx",
+    ".zip", ".7z", ".rar", ".json", ".md"
+}
 PBKDF2_ROUNDS = 310_000
 DATA.mkdir(parents=True, exist_ok=True)
 FILES.mkdir(parents=True, exist_ok=True)
+ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="YFG Accounting Desk", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=ROOT / "app" / "static"), name="static")
@@ -182,19 +190,37 @@ CREATE TABLE IF NOT EXISTS automations(
  created_at TEXT NOT NULL, last_fired_at TEXT
 );
 
--- Phase 4: Chat
+-- Phase 4: Chat (full messenger: DM + GROUP + file attachments)
 CREATE TABLE IF NOT EXISTS chat_channels(
- id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'GROUP',
+ id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT 'GROUP', -- GROUP | DIRECT
  created_by TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS chat_messages(
  id TEXT PRIMARY KEY, channel_id TEXT NOT NULL REFERENCES chat_channels(id),
- user_id TEXT NOT NULL REFERENCES users(id), body TEXT NOT NULL, created_at TEXT NOT NULL
+ user_id TEXT NOT NULL REFERENCES users(id), body TEXT NOT NULL DEFAULT '',
+ attachment_id TEXT, -- NULL or references chat_attachments.id
+ reply_to TEXT REFERENCES chat_messages(id),
+ created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS chat_channel_members(
  channel_id TEXT NOT NULL REFERENCES chat_channels(id), user_id TEXT NOT NULL REFERENCES users(id),
+ last_read_at TEXT NOT NULL DEFAULT '', joined_at TEXT NOT NULL,
  PRIMARY KEY(channel_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS chat_attachments(
+ id TEXT PRIMARY KEY, original_name TEXT NOT NULL, stored_name TEXT NOT NULL,
+ mime_type TEXT NOT NULL DEFAULT 'application/octet-stream', size_bytes INTEGER NOT NULL DEFAULT 0,
+ sha256 TEXT NOT NULL DEFAULT '', uploaded_by TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL
+);
+-- Phase 4b: Customers (persons / portal / contracts / invoices — only persons active now)
+CREATE TABLE IF NOT EXISTS persons(
+ id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, first_name TEXT NOT NULL, last_name TEXT NOT NULL,
+ national_id TEXT NOT NULL DEFAULT '', phone TEXT NOT NULL DEFAULT '', email TEXT NOT NULL DEFAULT '',
+ address TEXT NOT NULL DEFAULT '', postal_code TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '',
+ linked_company_id TEXT REFERENCES companies(id), -- optional link to a company
+ active INTEGER NOT NULL DEFAULT 1, created_by TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL
+);
+-- "Coming soon" placeholders for portal / contracts / proforma / invoices are tracked only as future scope
 
 -- Phase 5: ISO 30414 HR Metrics Snapshots
 CREATE TABLE IF NOT EXISTS iso30414_snapshots(
@@ -552,6 +578,10 @@ PERMISSION_CATALOG = [
         {"key": "settings.companies", "label": "زیربخش تعریف شرکت", "roles": ["ADMIN", "CEO"]},
         {"key": "settings.users", "label": "زیربخش کاربران", "roles": ["ADMIN", "CEO"]},
         {"key": "settings.permissions", "label": "زیربخش نقش‌ها و دسترسی‌ها", "roles": ["ADMIN", "CEO"]},
+    ]},
+    {"group": "مشتریان", "items": [
+        {"key": "customers.view", "label": "مشاهده اشخاص و شرکت‌های مشتری", "roles": ["ADMIN", "CEO", "EMPLOYEE"]},
+        {"key": "customers.manage", "label": "تعریف/ویرایش/حذف اشخاص مشتری", "roles": ["ADMIN", "CEO"]},
     ]},
 ]
 
@@ -1196,7 +1226,7 @@ def service_worker():
 @app.get("/api/status")
 def status():
     with db() as con:
-        return {"setup_needed": con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0, "product": "YFG Accounting Desk", "version": "0.3.0.01"}
+        return {"setup_needed": con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0, "product": "YFG Accounting Desk", "version": "0.3.0.02"}
 
 
 @app.post("/api/setup")
@@ -2413,64 +2443,426 @@ def run_automations(request: Request):
 
 
 # ========================================================================
-# PHASE 4: CHAT API (simple, no WebSocket for MVP)
+# PHASE 4: CHAT API — full in-app messenger
+#   • Direct messages (DM) — auto channel between two users
+#   • Group channels — admin or any user can create with member_ids
+#   • File attachments (chat_attachments table)
+#   • Read receipts (last_read_at)
+#   • Polling-friendly list (no WebSocket needed for MVP)
 # ========================================================================
 
 class ChatMessageModel(BaseModel):
-    channel_id: str
-    body: str
+    body: str = ""
+    attachment_id: str | None = None
+    reply_to: str | None = None
 
 class ChatChannelModel(BaseModel):
-    name: str
+    name: str = ""
     member_ids: list[str] = []
+
+class ChatAddMembersModel(BaseModel):
+    member_ids: list[str] = []
+
+class ChatRenameModel(BaseModel):
+    name: str
+
+def _channel_display_name(channel: sqlite3.Row, viewer_id: str, con) -> str:
+    """For DIRECT channels, show the other user's name. For GROUP, show channel name."""
+    if channel["kind"] == "DIRECT":
+        others = con.execute(
+            "SELECT u.name FROM chat_channel_members m JOIN users u ON u.id=m.user_id "
+            "WHERE m.channel_id=? AND m.user_id!=?",
+            (channel["id"], viewer_id)
+        ).fetchall()
+        names = [o["name"] for o in others]
+        return "، ".join(names) if names else (channel["name"] or "گفتگو مستقیم")
+    return channel["name"] or "گروه بدون نام"
 
 @app.get("/api/chat/channels")
 def list_channels(request: Request):
     user = current_user(request)
+    require_perm(user, "chat.use")
     with db() as con:
-        if user["role"] in ("ADMIN", "CEO"):
-            channels = con.execute("""SELECT cc.*, COUNT(DISTINCT cm.id) AS message_count FROM chat_channels cc
-                                     LEFT JOIN chat_messages cm ON cm.channel_id=cc.id GROUP BY cc.id ORDER BY cc.created_at DESC""").fetchall()
-        else:
-            channels = con.execute("""SELECT cc.*, COUNT(DISTINCT cm.id) AS message_count FROM chat_channels cc
-                                     JOIN chat_channel_members m ON m.channel_id=cc.id AND m.user_id=?
-                                     LEFT JOIN chat_messages cm ON cm.channel_id=cc.id GROUP BY cc.id ORDER BY cc.created_at DESC""",
-                                    (user["id"],)).fetchall()
-        return [dict(r) for r in channels]
+        rows = con.execute("""
+            SELECT cc.id, cc.name, cc.kind, cc.created_by, cc.created_at,
+                   (SELECT COUNT(*) FROM chat_messages WHERE channel_id=cc.id) AS message_count,
+                   (SELECT COUNT(*) FROM chat_messages WHERE channel_id=cc.id
+                       AND created_at > COALESCE(
+                           (SELECT last_read_at FROM chat_channel_members WHERE channel_id=cc.id AND user_id=?), ''
+                       )) AS unread_count
+            FROM chat_channels cc
+            JOIN chat_channel_members m ON m.channel_id=cc.id AND m.user_id=?
+            ORDER BY (SELECT MAX(created_at) FROM chat_messages WHERE channel_id=cc.id) DESC,
+                     cc.created_at DESC
+        """, (user["id"], user["id"])).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["display_name"] = _channel_display_name(r, user["id"], con)
+            result.append(d)
+        return result
+
+@app.get("/api/chat/channels/{channel_id}")
+def get_channel(channel_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "chat.use")
+    with db() as con:
+        ch = con.execute("SELECT * FROM chat_channels WHERE id=?", (channel_id,)).fetchone()
+        if not ch: raise HTTPException(404, "گفتگو پیدا نشد")
+        is_member = con.execute(
+            "SELECT 1 FROM chat_channel_members WHERE channel_id=? AND user_id=?",
+            (channel_id, user["id"])
+        ).fetchone()
+        if not is_member and user["role"] not in ("ADMIN", "CEO"):
+            raise HTTPException(403, "شما عضو این گفتگو نیستید")
+        members = con.execute(
+            "SELECT u.id, u.name, u.first_name, u.last_name, u.role, m.joined_at, m.last_read_at "
+            "FROM chat_channel_members m JOIN users u ON u.id=m.user_id WHERE m.channel_id=? "
+            "ORDER BY m.joined_at",
+            (channel_id,)
+        ).fetchall()
+        d = dict(ch)
+        d["display_name"] = _channel_display_name(ch, user["id"], con)
+        d["members"] = [dict(m) for m in members]
+        return d
 
 @app.post("/api/chat/channels")
 def create_channel(payload: ChatChannelModel, request: Request):
     user = current_user(request)
+    require_perm(user, "chat.use")
+    if not payload.member_ids:
+        raise HTTPException(400, "حداقل یک کاربر را انتخاب کنید")
     with db() as con:
+        for mid in payload.member_ids:
+            exists = con.execute("SELECT 1 FROM users WHERE id=? AND active=1", (mid,)).fetchone()
+            if not exists: raise HTTPException(400, f"کاربر انتخاب‌شده وجود ندارد: {mid}")
+        if len(payload.member_ids) == 1:
+            other = payload.member_ids[0]
+            if other == user["id"]:
+                raise HTTPException(400, "نمی‌توانید به خودتان گفتگو مستقیم بسازید")
+            existing = con.execute("""
+                SELECT c.* FROM chat_channels c
+                WHERE c.kind='DIRECT'
+                AND c.id IN (SELECT channel_id FROM chat_channel_members WHERE user_id=?)
+                AND c.id IN (SELECT channel_id FROM chat_channel_members WHERE user_id=?)
+                AND (SELECT COUNT(*) FROM chat_channel_members WHERE channel_id=c.id) = 2
+            """, (user["id"], other)).fetchone()
+            if existing:
+                return {"id": existing["id"], "kind": "DIRECT", "name": "", "created": False}
+            ch_id = uid()
+            con.execute("INSERT INTO chat_channels VALUES(?,?,?,?,?)",
+                        (ch_id, "", "DIRECT", user["id"], now()))
+            con.execute("INSERT INTO chat_channel_members (channel_id, user_id, joined_at) VALUES(?,?,?)", (ch_id, user["id"], now()))
+            con.execute("INSERT INTO chat_channel_members (channel_id, user_id, joined_at) VALUES(?,?,?)", (ch_id, other, now()))
+            audit(con, user["id"], "CHAT_DM_CREATE", "chat_channel", ch_id, {"with": other})
+            return {"id": ch_id, "kind": "DIRECT", "name": "", "created": True}
+        name = (payload.name or "").strip() or "گروه جدید"
         ch_id = uid()
-        kind = "DIRECT" if len(payload.member_ids) == 1 else "GROUP"
-        con.execute("INSERT INTO chat_channels VALUES(?,?,?,?)", (ch_id, payload.name, kind, user["id"], now()))
+        con.execute("INSERT INTO chat_channels VALUES(?,?,?,?,?)",
+                    (ch_id, name, "GROUP", user["id"], now()))
         members = set(payload.member_ids + [user["id"]])
         for mid in members:
-            con.execute("INSERT OR IGNORE INTO chat_channel_members VALUES(?,?)", (ch_id, mid))
-        audit(con, user["id"], "CHAT_CHANNEL_CREATE", "chat_channel", ch_id, {"name": payload.name})
-        return {"id": ch_id, "name": payload.name}
+            con.execute("INSERT OR IGNORE INTO chat_channel_members (channel_id, user_id, joined_at) VALUES(?,?,?)", (ch_id, mid, now()))
+        audit(con, user["id"], "CHAT_GROUP_CREATE", "chat_channel", ch_id, {"name": name, "members": list(members)})
+        return {"id": ch_id, "kind": "GROUP", "name": name, "created": True}
+
+@app.patch("/api/chat/channels/{channel_id}")
+def rename_channel(channel_id: str, payload: ChatRenameModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "chat.use")
+    name = (payload.name or "").strip()
+    if not name: raise HTTPException(400, "نام گروه نمی‌تواند خالی باشد")
+    with db() as con:
+        ch = con.execute("SELECT * FROM chat_channels WHERE id=?", (channel_id,)).fetchone()
+        if not ch: raise HTTPException(404, "گفتگو پیدا نشد")
+        if ch["kind"] != "GROUP":
+            raise HTTPException(400, "فقط گروه‌ها قابل تغییر نام هستند")
+        if user["role"] not in ("ADMIN", "CEO") and ch["created_by"] != user["id"]:
+            raise HTTPException(403, "فقط سازنده گروه یا مدیر می‌تواند نام را تغییر دهد")
+        con.execute("UPDATE chat_channels SET name=? WHERE id=?", (name, channel_id))
+        audit(con, user["id"], "CHAT_RENAME", "chat_channel", channel_id, {"name": name})
+        return {"id": channel_id, "name": name}
+
+@app.post("/api/chat/channels/{channel_id}/members")
+def add_members(channel_id: str, payload: ChatAddMembersModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "chat.use")
+    with db() as con:
+        ch = con.execute("SELECT * FROM chat_channels WHERE id=?", (channel_id,)).fetchone()
+        if not ch: raise HTTPException(404, "گفتگو پیدا نشد")
+        if ch["kind"] != "GROUP":
+            raise HTTPException(400, "فقط در گروه‌ها می‌توان عضو اضافه کرد")
+        if user["role"] not in ("ADMIN", "CEO") and ch["created_by"] != user["id"]:
+            raise HTTPException(403, "فقط سازنده گروه یا مدیر می‌تواند عضو اضافه کند")
+        added = 0
+        for mid in payload.member_ids:
+            exists = con.execute("SELECT 1 FROM users WHERE id=? AND active=1", (mid,)).fetchone()
+            if not exists: continue
+            cur = con.execute("INSERT OR IGNORE INTO chat_channel_members (channel_id, user_id, joined_at) VALUES(?,?,?)",
+                              (channel_id, mid, now()))
+            added += cur.rowcount
+            notify(con, mid, "گروه جدید", f"شما به گروه «{ch['name']}» اضافه شدید")
+        audit(con, user["id"], "CHAT_ADD_MEMBERS", "chat_channel", channel_id, {"added": added})
+        return {"added": added}
 
 @app.get("/api/chat/channels/{channel_id}/messages")
 def list_messages(channel_id: str, request: Request):
     user = current_user(request)
+    require_perm(user, "chat.use")
     with db() as con:
-        rows = con.execute("""SELECT cm.*, u.name AS user_name, u.role AS user_role FROM chat_messages cm
-                              JOIN users u ON u.id=cm.user_id WHERE cm.channel_id=? ORDER BY cm.created_at ASC LIMIT 200""",
-                           (channel_id,)).fetchall()
+        is_member = con.execute(
+            "SELECT 1 FROM chat_channel_members WHERE channel_id=? AND user_id=?",
+            (channel_id, user["id"])
+        ).fetchone()
+        if not is_member and user["role"] not in ("ADMIN", "CEO"):
+            raise HTTPException(403, "شما عضو این گفتگو نیستید")
+        rows = con.execute("""
+            SELECT cm.id, cm.channel_id, cm.user_id, cm.body, cm.attachment_id, cm.reply_to, cm.created_at,
+                   u.name AS user_name, u.first_name, u.last_name, u.role AS user_role,
+                   ca.original_name AS attachment_name, ca.size_bytes AS attachment_size, ca.mime_type AS attachment_mime
+            FROM chat_messages cm
+            JOIN users u ON u.id=cm.user_id
+            LEFT JOIN chat_attachments ca ON ca.id=cm.attachment_id
+            WHERE cm.channel_id=?
+            ORDER BY cm.created_at ASC LIMIT 500
+        """, (channel_id,)).fetchall()
         return [dict(r) for r in rows]
 
 @app.post("/api/chat/channels/{channel_id}/messages")
 def send_message(channel_id: str, payload: ChatMessageModel, request: Request):
     user = current_user(request)
+    require_perm(user, "chat.use")
+    if not payload.body.strip() and not payload.attachment_id:
+        raise HTTPException(400, "پیام نمی‌تواند خالی باشد")
     with db() as con:
+        ch = con.execute("SELECT * FROM chat_channels WHERE id=?", (channel_id,)).fetchone()
+        if not ch: raise HTTPException(404, "گفتگو پیدا نشد")
+        is_member = con.execute(
+            "SELECT 1 FROM chat_channel_members WHERE channel_id=? AND user_id=?",
+            (channel_id, user["id"])
+        ).fetchone()
+        if not is_member and user["role"] not in ("ADMIN", "CEO"):
+            raise HTTPException(403, "شما عضو این گفتگو نیستید")
+        if payload.attachment_id:
+            att = con.execute("SELECT * FROM chat_attachments WHERE id=?", (payload.attachment_id,)).fetchone()
+            if not att or att["uploaded_by"] != user["id"]:
+                raise HTTPException(400, "پیوست نامعتبر")
         msg_id = uid()
-        con.execute("INSERT INTO chat_messages VALUES(?,?,?,?)", (msg_id, channel_id, user["id"], payload.body, now()))
-        # Notify other members
-        members = con.execute("SELECT user_id FROM chat_channel_members WHERE channel_id=? AND user_id!=?", (channel_id, user["id"])).fetchall()
+        con.execute(
+            "INSERT INTO chat_messages (id, channel_id, user_id, body, attachment_id, reply_to, created_at) VALUES(?,?,?,?,?,?,?)",
+            (msg_id, channel_id, user["id"], payload.body.strip(), payload.attachment_id, payload.reply_to, now())
+        )
+        members = con.execute(
+            "SELECT user_id FROM chat_channel_members WHERE channel_id=? AND user_id!=?",
+            (channel_id, user["id"])
+        ).fetchall()
+        ch_name = _channel_display_name(ch, user["id"], con) if ch["kind"] == "GROUP" else "گفتگو مستقیم"
+        preview = (payload.body[:50] + "…") if len(payload.body) > 50 else payload.body
+        if not preview and payload.attachment_id:
+            preview = "[فایل پیوست]"
         for m in members:
-            notify(con, m["user_id"], "پیام جدید", f"{user['name']}: {payload.body[:50]}")
+            notify(con, m["user_id"], f"پیام جدید در {ch_name}", f"{user['name']}: {preview}")
+        audit(con, user["id"], "CHAT_MESSAGE", "chat_message", msg_id, {"channel_id": channel_id})
         return {"id": msg_id, "created_at": now()}
+
+@app.post("/api/chat/channels/{channel_id}/read")
+def mark_channel_read(channel_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "chat.use")
+    with db() as con:
+        is_member = con.execute(
+            "SELECT 1 FROM chat_channel_members WHERE channel_id=? AND user_id=?",
+            (channel_id, user["id"])
+        ).fetchone()
+        if not is_member: raise HTTPException(403, "عضو نیستید")
+        con.execute("UPDATE chat_channel_members SET last_read_at=? WHERE channel_id=? AND user_id=?",
+                    (now(), channel_id, user["id"]))
+        return {"ok": True}
+
+@app.post("/api/chat/upload")
+async def chat_upload(request: Request, file: UploadFile = File(...)):
+    """Upload a file for chat attachment. Returns attachment_id to use in send_message."""
+    user = current_user(request)
+    require_perm(user, "chat.use")
+    content = await file.read(CHAT_ATTACHMENT_MAX + 1)
+    if len(content) > CHAT_ATTACHMENT_MAX:
+        raise HTTPException(413, "حجم فایل بیش از حد مجاز (۲۵ مگابایت)")
+    if not file.filename:
+        raise HTTPException(400, "نام فایل نامعتبر")
+    suffix = Path(file.filename).suffix.lower()
+    if suffix not in CHAT_ATTACHMENT_ALLOWED:
+        raise HTTPException(400, f"نوع فایل پشتیبانی نمی‌شود: {suffix}. مجاز: تصویر، PDF، اکسل، ورد، فشرده")
+    att_id = uid()
+    stored_name = f"{att_id}{suffix}"
+    (ATTACHMENTS_DIR / stored_name).write_bytes(content)
+    import hashlib
+    sha = hashlib.sha256(content).hexdigest()
+    with db() as con:
+        con.execute(
+            "INSERT INTO chat_attachments VALUES(?,?,?,?,?,?,?,?)",
+            (att_id, file.filename, stored_name, file.content_type or "application/octet-stream",
+             len(content), sha, user["id"], now())
+        )
+        audit(con, user["id"], "CHAT_UPLOAD", "chat_attachment", att_id,
+              {"name": file.filename, "size": len(content)})
+    return {"attachment_id": att_id, "original_name": file.filename, "size": len(content)}
+
+@app.get("/api/chat/attachments/{att_id}")
+def download_attachment(att_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "chat.use")
+    with db() as con:
+        att = con.execute("SELECT * FROM chat_attachments WHERE id=?", (att_id,)).fetchone()
+        if not att: raise HTTPException(404, "پیوست پیدا نشد")
+        msg = con.execute(
+            "SELECT channel_id FROM chat_messages WHERE attachment_id=?", (att_id,)
+        ).fetchone()
+        if msg:
+            is_member = con.execute(
+                "SELECT 1 FROM chat_channel_members WHERE channel_id=? AND user_id=?",
+                (msg["channel_id"], user["id"])
+            ).fetchone()
+            if not is_member and user["role"] not in ("ADMIN", "CEO"):
+                raise HTTPException(403, "دسترسی غیرمجاز")
+        path = ATTACHMENTS_DIR / att["stored_name"]
+        if not path.exists(): raise HTTPException(404, "فایل روی دیسک پیدا نشد")
+        from fastapi.responses import FileResponse
+        return FileResponse(str(path), filename=att["original_name"], media_type=att["mime_type"])
+
+@app.get("/api/chat/users")
+def list_chat_users(request: Request):
+    """List active users (other than me) for the new chat picker."""
+    user = current_user(request)
+    require_perm(user, "chat.use")
+    with db() as con:
+        rows = con.execute(
+            "SELECT id, name, first_name, last_name, role, active FROM users "
+            "WHERE active=1 AND id!=? ORDER BY name",
+            (user["id"],)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+# ========================================================================
+# PHASE 4b: CUSTOMERS API — persons (active) + placeholder stubs
+# ========================================================================
+
+class PersonCreateModel(BaseModel):
+    code: str
+    first_name: str
+    last_name: str
+    national_id: str = ""
+    phone: str = ""
+    email: str = ""
+    address: str = ""
+    postal_code: str = ""
+    notes: str = ""
+    linked_company_id: str | None = None
+    active: int = 1
+
+class PersonUpdateModel(BaseModel):
+    first_name: str | None = None
+    last_name: str | None = None
+    national_id: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    address: str | None = None
+    postal_code: str | None = None
+    notes: str | None = None
+    linked_company_id: str | None = None
+    active: int | None = None
+
+@app.get("/api/persons")
+def list_persons(request: Request, q: str = ""):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        sql = """SELECT p.*, c.name AS linked_company_name
+                 FROM persons p LEFT JOIN companies c ON c.id=p.linked_company_id
+                 WHERE 1=1"""
+        params: list = []
+        if q:
+            sql += " AND (p.first_name LIKE ? OR p.last_name LIKE ? OR p.code LIKE ? OR p.national_id LIKE ? OR p.phone LIKE ?)"
+            kw = f"%{q}%"
+            params = [kw, kw, kw, kw, kw]
+        sql += " ORDER BY p.created_at DESC LIMIT 500"
+        rows = con.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+@app.post("/api/persons")
+def create_person(payload: PersonCreateModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    if not payload.code.strip() or not payload.first_name.strip() or not payload.last_name.strip():
+        raise HTTPException(400, "کد، نام و نام خانوادگی الزامی است")
+    if payload.linked_company_id:
+        with db() as con:
+            if not con.execute("SELECT 1 FROM companies WHERE id=?", (payload.linked_company_id,)).fetchone():
+                raise HTTPException(400, "شرکت انتخاب‌شده وجود ندارد")
+    pid = uid()
+    with db() as con:
+        try:
+            con.execute("""INSERT INTO persons
+                (id, code, first_name, last_name, national_id, phone, email, address, postal_code, notes,
+                 linked_company_id, active, created_by, created_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (pid, payload.code.strip(), payload.first_name.strip(), payload.last_name.strip(),
+                 payload.national_id, payload.phone, payload.email, payload.address, payload.postal_code,
+                 payload.notes, payload.linked_company_id, payload.active, user["id"], now()))
+        except Exception as e:
+            if "UNIQUE" in str(e): raise HTTPException(400, "کد شخص تکراری است")
+            raise
+        audit(con, user["id"], "PERSON_CREATE", "person", pid, {"code": payload.code, "name": f"{payload.first_name} {payload.last_name}"})
+    return {"id": pid, "code": payload.code}
+
+@app.get("/api/persons/{person_id}")
+def get_person(person_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        row = con.execute(
+            "SELECT p.*, c.name AS linked_company_name FROM persons p "
+            "LEFT JOIN companies c ON c.id=p.linked_company_id WHERE p.id=?",
+            (person_id,)
+        ).fetchone()
+        if not row: raise HTTPException(404, "شخص پیدا نشد")
+        return dict(row)
+
+@app.patch("/api/persons/{person_id}")
+def update_person(person_id: str, payload: PersonUpdateModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    with db() as con:
+        existing = con.execute("SELECT * FROM persons WHERE id=?", (person_id,)).fetchone()
+        if not existing: raise HTTPException(404, "شخص پیدا نشد")
+        if payload.linked_company_id == "":
+            payload.linked_company_id = None
+        if payload.linked_company_id:
+            if not con.execute("SELECT 1 FROM companies WHERE id=?", (payload.linked_company_id,)).fetchone():
+                raise HTTPException(400, "شرکت انتخاب‌شده وجود ندارد")
+        updates = []
+        params: list = []
+        for k, v in payload.model_dump(exclude_unset=True).items():
+            if v is None: continue
+            updates.append(f"{k}=?")
+            params.append(v)
+        if not updates:
+            return {"ok": True, "updated": 0}
+        params.append(person_id)
+        con.execute(f"UPDATE persons SET {', '.join(updates)} WHERE id=?", params)
+        audit(con, user["id"], "PERSON_UPDATE", "person", person_id, {"fields": updates})
+    return {"ok": True, "updated": len(updates)}
+
+@app.delete("/api/persons/{person_id}")
+def delete_person(person_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    with db() as con:
+        existing = con.execute("SELECT * FROM persons WHERE id=?", (person_id,)).fetchone()
+        if not existing: raise HTTPException(404, "شخص پیدا نشد")
+        con.execute("DELETE FROM persons WHERE id=?", (person_id,))
+        audit(con, user["id"], "PERSON_DELETE", "person", person_id, {"code": existing["code"]})
+    return {"ok": True}
 
 
 # ========================================================================

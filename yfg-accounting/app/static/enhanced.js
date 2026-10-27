@@ -104,6 +104,13 @@
       section.className = 'view hidden';
       main.appendChild(section);
     });
+    ['customers'].forEach(v => {
+      if (document.getElementById(`view-${v}`)) return;
+      const section = document.createElement('section');
+      section.id = `view-${v}`;
+      section.className = 'view hidden';
+      main.appendChild(section);
+    });
   }
 
   function showView(view) {
@@ -252,18 +259,269 @@
     } catch(e) { section.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
   }
 
-  // ============ Chat ============
+  // ============ Chat — Full In-App Messenger ============
+  let chatPollTimer = null;
+  let chatCurrentChannel = null;
+  let chatCurrentMessages = [];
   async function renderChat() {
     const section = document.getElementById('view-chat');
     if (!section) return;
     try {
+      // Stop any previous polling
+      if (chatPollTimer) { clearInterval(chatPollTimer); chatPollTimer = null; }
+      const isAdmin = state.me?.role === 'ADMIN' || state.me?.role === 'CEO';
       const channels = await api('/chat/channels');
-      section.innerHTML = `<h1>گفتگو</h1><div style="display:flex;gap:16px;height:calc(100vh - 220px);"><div style="width:240px;flex-shrink:0;background:#f1f5f9;border-radius:12px;padding:12px;overflow-y:auto;"><button class="btn primary small" style="width:100%;margin-bottom:12px;" onclick="window.__newChannel()">＋ کانال جدید</button>${(channels||[]).map(ch=>`<div onclick="window.__openChannel('${ch.id}','${esc(ch.name)}')" style="padding:10px;border-radius:8px;cursor:pointer;margin-bottom:4px;background:#fff;"><strong>${esc(ch.name)}</strong><div style="font-size:11px;color:#64748b;">${ch.message_count||0} پیام</div></div>`).join('')}</div><div style="flex:1;display:flex;flex-direction:column;background:#fff;border-radius:12px;overflow:hidden;"><div id="chatMessages" style="flex:1;overflow-y:auto;padding:16px;"><p style="text-align:center;color:#94a3b8;padding-top:40px;">یک کانال را انتخاب کنید</p></div><div style="padding:12px;border-top:1px solid #e2e8f0;"><div style="display:flex;gap:8px;"><input id="chatInput" class="field" placeholder="پیام بنویسید..." style="flex:1;" onkeydown="if(event.key==='Enter')window.__sendChatMsg()"><button class="btn primary" onclick="window.__sendChatMsg()">ارسال</button></div></div></div></div>`;
-      window.__newChannel = () => { const n=prompt('نام کانال:'); if(!n) return; api('/chat/channels',{method:'POST',body:JSON.stringify({name:n,member_ids:[]})}).then(()=>{toast('کانال ایجاد شد');renderChat()}).catch(e=>toast(e.message,true)); };
-      window.__openChannel = async (chId) => { currentChannel=chId; try { const msgs=await api(`/chat/channels/${chId}/messages`); const c=document.getElementById('chatMessages'); if(!c) return; c.innerHTML=(msgs||[]).map(m=>`<div style="margin-bottom:12px;${m.user_id===state.me.id?'text-align:left;':''}"><div style="display:inline-block;max-width:70%;padding:10px 16px;border-radius:12px;background:${m.user_id===state.me.id?'#0b8f89':'#f1f5f9'};color:${m.user_id===state.me.id?'#fff':'#0f172a'};"><div style="font-size:11px;opacity:0.7;margin-bottom:4px;">${esc(m.user_name)}</div><div>${esc(m.body)}</div><div style="font-size:10px;opacity:0.5;margin-top:4px;">${timeFmt(m.created_at)}</div></div></div>`).join(''); c.scrollTop=c.scrollHeight; } catch(e) { toast(e.message,true); } };
-      window.__sendChatMsg = async () => { if(!currentChannel) return toast('کانال را انتخاب کنید',true); const i=document.getElementById('chatInput'); const b=i.value.trim(); if(!b) return; i.value=''; try { await api(`/chat/channels/${currentChannel}/messages`,{method:'POST',body:JSON.stringify({channel_id:currentChannel,body:b})}); window.__openChannel(currentChannel); } catch(e) { toast(e.message,true); } };
+      const allUsers = await api('/chat/users');
+      const renderChannelList = () => (channels||[]).map(ch=>{
+        const isDirect = ch.kind === 'DIRECT';
+        const icon = isDirect ? '👤' : '👥';
+        const unread = ch.unread_count > 0 ? `<span style="background:#ef4444;color:#fff;font-size:10px;padding:1px 7px;border-radius:10px;margin-right:6px;">${ch.unread_count}</span>` : '';
+        return `<div onclick="window.__chatOpen('${ch.id}')" id="chatItem-${ch.id}" style="padding:11px 12px;border-radius:10px;cursor:pointer;margin-bottom:6px;background:#fff;transition:all .15s;${chatCurrentChannel===ch.id?'border-right:3px solid #0b8f89;background:#f0fdfa;':''}">
+          <div style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;">
+            <span style="font-size:14px;">${icon}</span>
+            <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(ch.display_name||ch.name||'گفتگو')}</span>
+            ${unread}
+          </div>
+          <div style="font-size:11px;color:#64748b;margin-top:4px;">${ch.message_count||0} پیام</div>
+        </div>`;
+      }).join('') || '<p style="text-align:center;color:#94a3b8;font-size:12px;padding:16px 8px;">گفتگویی وجود ندارد</p>';
+      section.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+          <h1 style="margin:0;">💬 گفتگو</h1>
+          <div style="display:flex;gap:8px;">
+            <button class="btn primary small" onclick="window.__chatNewDM()">＋ گفتگو مستقیم</button>
+            <button class="btn soft small" onclick="window.__chatNewGroup()">👥 گروه جدید</button>
+          </div>
+        </div>
+        <div style="display:flex;gap:14px;height:calc(100vh - 240px);border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;background:#fff;">
+          <div style="width:260px;flex-shrink:0;background:#f8fafc;border-left:1px solid #e2e8f0;overflow-y:auto;padding:10px;">
+            ${renderChannelList()}
+          </div>
+          <div style="flex:1;display:flex;flex-direction:column;min-width:0;">
+            <div id="chatHeader" style="padding:12px 16px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;background:#fff;">
+              <div id="chatHeaderTitle" style="font-weight:600;font-size:14px;">یک گفتگو را انتخاب کنید</div>
+              <div id="chatHeaderActions" style="display:flex;gap:6px;"></div>
+            </div>
+            <div id="chatMessages" style="flex:1;overflow-y:auto;padding:14px 16px;background:#fafbfc;">
+              <p style="text-align:center;color:#94a3b8;padding-top:60px;font-size:13px;">برای شروع گفتگو، یک مکالمه را از لیست کناری انتخاب کنید یا گفتگوی جدید بسازید.</p>
+            </div>
+            <div id="chatComposer" style="padding:10px 14px;border-top:1px solid #e2e8f0;background:#fff;display:flex;gap:8px;align-items:flex-end;">
+              <label id="chatAttachBtn" style="cursor:pointer;padding:8px 10px;background:#f1f5f9;border-radius:8px;font-size:18px;color:#475569;" title="ضمیمه فایل">📎<input type="file" id="chatFileInput" style="display:none;" onchange="window.__chatUpload(this)"></label>
+              <textarea id="chatInput" class="field" placeholder="پیام بنویسید... (Enter برای ارسال، Shift+Enter برای سطر جدید)" rows="1" style="flex:1;resize:none;max-height:100px;font-size:13px;padding:8px 12px;" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();window.__chatSend()}"></textarea>
+              <button class="btn primary" onclick="window.__chatSend()" style="padding:8px 16px;">➤</button>
+            </div>
+          </div>
+        </div>
+        <p class="hint" style="margin-top:10px;font-size:11px;color:#94a3b8;">فایل‌های مجاز: تصویر، PDF، اکسل، ورد، فشرده — حداکثر ۲۵ مگابایت</p>
+      `;
+
+      // Channel open
+      window.__chatOpen = async (chId) => {
+        chatCurrentChannel = chId;
+        // Update selected styling
+        $$('[id^="chatItem-"]').forEach(e=>e.style.background='#fff');
+        const item = document.getElementById(`chatItem-${chId}`);
+        if (item) { item.style.background='#f0fdfa'; item.style.borderRight='3px solid #0b8f89'; }
+        try {
+          const ch = await api(`/chat/channels/${chId}`);
+          const msgs = await api(`/chat/channels/${chId}/messages`);
+          chatCurrentMessages = msgs || [];
+          // Header
+          const isGroup = ch.kind === 'GROUP';
+          const isOwner = isAdmin || ch.created_by === state.me.id;
+          $('#chatHeaderTitle').innerHTML = `${isGroup?'👥':'👤'} ${esc(ch.display_name||ch.name||'گفتگو مستقیم')}`;
+          $('#chatHeaderActions').innerHTML = isGroup ? `
+            ${isOwner?`<button class="btn small soft" onclick="window.__chatRename('${chId}','${esc(ch.name)}')">✎ نام</button>`:''}
+            ${isOwner?`<button class="btn small soft" onclick="window.__chatAddMember('${chId}')">＋ عضو</button>`:''}
+            <button class="btn small soft" onclick="window.__chatShowMembers('${chId}')" title="اعضای گروه">👥 ${ch.members?.length||0}</button>
+          ` : `<span style="font-size:12px;color:#64748b;">گفتگو مستقیم</span>`;
+          // Render messages
+          renderChatMessages(msgs || []);
+          // Mark as read
+          api(`/chat/channels/${chId}/read`, {method:'POST'}).then(()=>renderChat()).catch(()=>{});
+        } catch(e) { toast(e.message, true); }
+      };
+
+      // Send message
+      window.__chatSend = async () => {
+        if (!chatCurrentChannel) return toast('ابتدا یک گفتگو را انتخاب کنید', true);
+        const i = document.getElementById('chatInput');
+        const body = i.value.trim();
+        if (!body) return;
+        i.value = '';
+        i.style.height = 'auto';
+        try {
+          await api(`/chat/channels/${chatCurrentChannel}/messages`, {method:'POST', body:JSON.stringify({body})});
+          await window.__chatOpen(chatCurrentChannel);
+        } catch(e) { toast(e.message, true); }
+      };
+
+      // Upload file
+      window.__chatUpload = async (input) => {
+        if (!input.files || !input.files[0]) return;
+        if (!chatCurrentChannel) {
+          toast('ابتدا یک گفتگو را انتخاب کنید', true);
+          input.value = '';
+          return;
+        }
+        const fd = new FormData();
+        fd.append('file', input.files[0]);
+        try {
+          const up = await api('/chat/upload', {method:'POST', body: fd});
+          // Send a message with attachment_id and empty body
+          await api(`/chat/channels/${chatCurrentChannel}/messages`, {
+            method:'POST', body: JSON.stringify({body: '', attachment_id: up.attachment_id})
+          });
+          await window.__chatOpen(chatCurrentChannel);
+        } catch(e) { toast(e.message, true); }
+        input.value = '';
+      };
+
+      // New DM
+      window.__chatNewDM = () => openChatUserPicker('گفتگو مستقیم جدید', 'انتخاب کاربر برای گفتگو مستقیم', allUsers, (uid)=>{
+        api('/chat/channels', {method:'POST', body: JSON.stringify({member_ids:[uid]})})
+          .then(r => { toast('گفتگو ایجاد شد'); renderChat().then(()=>window.__chatOpen(r.id)); })
+          .catch(e => toast(e.message, true));
+      });
+
+      // New group
+      window.__chatNewGroup = () => openChatGroupModal(allUsers, isAdmin, (name, memberIds) => {
+        api('/chat/channels', {method:'POST', body: JSON.stringify({name, member_ids: memberIds})})
+          .then(r => { toast('گروه ایجاد شد'); renderChat().then(()=>window.__chatOpen(r.id)); })
+          .catch(e => toast(e.message, true));
+      });
+
+      // Rename group
+      window.__chatRename = (chId, oldName) => {
+        const n = prompt('نام جدید گروه:', oldName);
+        if (!n) return;
+        api(`/chat/channels/${chId}`, {method:'PATCH', body: JSON.stringify({name: n})})
+          .then(()=>{toast('نام تغییر یافت'); window.__chatOpen(chId);})
+          .catch(e=>toast(e.message,true));
+      };
+
+      // Add member
+      window.__chatAddMember = (chId) => {
+        // Filter out users already in the channel — simplest: pass allUsers to picker and let user pick
+        openChatUserMultiPicker('افزودن عضو به گروه', 'کاربران برای افزودن', allUsers, (selected)=>{
+          api(`/chat/channels/${chId}/members`, {method:'POST', body: JSON.stringify({member_ids: selected})})
+            .then(r=>{toast(`${r.added} عضو اضافه شد`); window.__chatOpen(chId);})
+            .catch(e=>toast(e.message,true));
+        });
+      };
+
+      // Show members
+      window.__chatShowMembers = async (chId) => {
+        try {
+          const ch = await api(`/chat/channels/${chId}`);
+          const items = (ch.members||[]).map(m=>{
+            const roleLbl = labels[m.role]||m.role||'';
+            return `<div style="display:flex;justify-content:space-between;padding:10px 14px;border-bottom:1px solid #f1f5f9;">
+              <div><strong>${esc(m.name)}</strong><div style="font-size:11px;color:#94a3b8;">${roleLbl}</div></div>
+              <div style="font-size:11px;color:#64748b;">عضو از ${dateFmt(m.joined_at)}</div>
+            </div>`;
+          }).join('');
+          modal(`اعضای گروه «${esc(ch.name)}»`, '', `<div style="max-height:400px;overflow-y:auto;border:1px solid #e2e8f0;border-radius:8px;">
+              ${items || '<p style="padding:20px;text-align:center;color:#94a3b8;">عضوی وجود ندارد</p>'}
+            </div>
+            <div style="display:flex;justify-content:flex-end;margin-top:14px;"><button class="btn soft" onclick="document.getElementById('modalRoot').innerHTML=''">بستن</button></div>`);
+        } catch(e) { toast(e.message, true); }
+      };
+
+      // Poll for new messages every 5s
+      chatPollTimer = setInterval(async () => {
+        if (!chatCurrentChannel) return;
+        try {
+          const fresh = await api(`/chat/channels/${chatCurrentChannel}/messages`);
+          // Re-render only if message count changed
+          if (JSON.stringify(fresh.map(m=>m.id)) !== JSON.stringify(chatCurrentMessages.map(m=>m.id))) {
+            chatCurrentMessages = fresh || [];
+            renderChatMessages(chatCurrentMessages);
+          }
+        } catch(e) {/* silent */}
+      }, 5000);
+
+      function renderChatMessages(msgs) {
+        const c = document.getElementById('chatMessages');
+        if (!c) return;
+        if (!msgs.length) {
+          c.innerHTML = '<p style="text-align:center;color:#94a3b8;padding-top:60px;font-size:13px;">این گفتگو خالی است. اولین پیام را ارسال کنید!</p>';
+          return;
+        }
+        c.innerHTML = msgs.map(m => {
+          const mine = m.user_id === state.me.id;
+          const att = m.attachment_name ? `<a href="/api/chat/attachments/${m.attachment_id}" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,0.18);padding:6px 10px;border-radius:6px;font-size:12px;text-decoration:none;color:inherit;margin-top:6px;">📎 ${esc(m.attachment_name)} <span style="opacity:0.6;">(${m.attachment_size?(m.attachment_size/1024).toFixed(1)+'KB':''})</span></a>` : '';
+          return `<div style="margin-bottom:14px;display:flex;justify-content:${mine?'flex-end':'flex-start'};">
+            <div style="max-width:70%;padding:10px 14px;border-radius:14px;background:${mine?'#0b8f89':'#ffffff'};color:${mine?'#fff':'#0f172a'};box-shadow:0 1px 2px rgba(0,0,0,0.06);border:1px solid ${mine?'transparent':'#e2e8f0'};">
+              <div style="font-size:11px;opacity:${mine?0.8:0.6};margin-bottom:4px;font-weight:600;">${mine?'شما':esc(m.user_name)}</div>
+              ${m.body?`<div style="font-size:13px;line-height:1.6;white-space:pre-wrap;word-wrap:break-word;">${esc(m.body)}</div>`:''}
+              ${att}
+              <div style="font-size:10px;opacity:0.6;margin-top:4px;text-align:${mine?'left':'right'};">${timeFmt(m.created_at)}</div>
+            </div>
+          </div>`;
+        }).join('');
+        c.scrollTop = c.scrollHeight;
+      }
     } catch(e) { section.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
   }
+
+  // Helper: chat user picker (single user)
+  function openChatUserPicker(title, sub, users, onPick) {
+    const list = (users||[]).map(u=>`
+      <div onclick="window.__pickUser('${u.id}','${esc(u.name)}')" style="padding:10px 12px;border-radius:8px;background:#fff;border:1px solid #e2e8f0;margin-bottom:6px;cursor:pointer;display:flex;align-items:center;gap:10px;">
+        <div style="width:34px;height:34px;border-radius:50%;background:#0b8f89;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:13px;">${esc(u.name?.charAt(0))}</div>
+        <div><div style="font-size:13px;font-weight:600;">${esc(u.name)}</div><div style="font-size:11px;color:#94a3b8;">${labels[u.role]||u.role}</div></div>
+      </div>`).join('');
+    window.__pickUser = (uid, uname) => { document.getElementById('modalRoot').innerHTML=''; onPick(uid); };
+    modal(`${title}`, `${sub}`, `${list || '<p style="color:#94a3b8;text-align:center;padding:20px;">کاربری برای انتخاب وجود ندارد</p>'}<div style="display:flex;justify-content:flex-end;margin-top:14px;"><button class="btn soft" onclick="document.getElementById('modalRoot').innerHTML=''">انصراف</button></div>`);
+  }
+
+  // Helper: chat multi-user picker
+  function openChatUserMultiPicker(title, sub, users, onPick) {
+    const list = (users||[]).map(u=>`
+      <label style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:6px;cursor:pointer;">
+        <input type="checkbox" value="${u.id}" class="chat-pick-user" style="width:18px;height:18px;">
+        <div style="flex:1;">
+          <div style="font-size:13px;font-weight:600;">${esc(u.name)}</div>
+          <div style="font-size:11px;color:#94a3b8;">${labels[u.role]||u.role}</div>
+        </div>
+      </label>`).join('');
+    modal(`${title}`, `${sub}`, `${list || '<p style="color:#94a3b8;text-align:center;padding:20px;">کاربری برای انتخاب وجود ندارد</p>'}<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px;"><button class="btn soft" onclick="document.getElementById('modalRoot').innerHTML=''">انصراف</button><button class="btn primary" onclick="window.__confirmMultiPick()">تأیید</button></div>`);
+    window.__confirmMultiPick = () => {
+      const ids = [...document.querySelectorAll('.chat-pick-user:checked')].map(c=>c.value);
+      if (!ids.length) return toast('حداقل یک کاربر را انتخاب کنید', true);
+      document.getElementById('modalRoot').innerHTML='';
+      onPick(ids);
+    };
+  }
+
+  // Helper: new group modal (name + members)
+  function openChatGroupModal(users, isAdmin, onConfirm) {
+    const list = (users||[]).map(u=>`
+      <label style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:6px;cursor:pointer;">
+        <input type="checkbox" value="${u.id}" class="chat-group-member" style="width:18px;height:18px;">
+        <div style="flex:1;">
+          <div style="font-size:13px;font-weight:600;">${esc(u.name)}</div>
+          <div style="font-size:11px;color:#94a3b8;">${labels[u.role]||u.role}</div>
+        </div>
+      </label>`).join('');
+    modal(`ایجاد گروه جدید`, '', `<div style="margin:12px 0;">
+        <label style="font-size:13px;display:block;margin-bottom:6px;">نام گروه <span style="color:#ef4444;">*</span></label>
+        <input id="chatGroupName" class="field" placeholder="مثلاً تیم حسابداری" maxlength="60">
+      </div>
+      <p class="muted" style="font-size:12px;margin:8px 0;">اعضای گروه (حداقل یک نفر):</p>
+      <div style="max-height:260px;overflow-y:auto;margin-bottom:12px;">${list}</div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;"><button class="btn soft" onclick="document.getElementById('modalRoot').innerHTML=''">انصراف</button><button class="btn primary" onclick="window.__confirmGroup()">ایجاد گروه</button></div>`);
+    window.__confirmGroup = () => {
+      const name = document.getElementById('chatGroupName')?.value.trim();
+      const ids = [...document.querySelectorAll('.chat-group-member:checked')].map(c=>c.value);
+      if (!name) return toast('نام گروه را وارد کنید', true);
+      if (!ids.length) return toast('حداقل یک عضو را انتخاب کنید', true);
+      document.getElementById('modalRoot').innerHTML='';
+      onConfirm(name, ids);
+    };
+  }
+
 
   // ============ Automations ============
   async function renderAutomations() {
@@ -670,6 +928,202 @@
   // (Removed — view-performance-entries is now managed by renderPerformanceEntries in performance.js.
   //  Score/delegate/history buttons can be added to that view in future if needed.)
 
+  // ============ Customers Tab (مشتریان) ============
+  let customersTab = 'persons';
+  const CUSTOMER_TABS = [
+    {key:'persons', label:'اشخاص', icon:'👤'},
+    {key:'companies', label:'شرکت‌ها', icon:'🏢'},
+    {key:'portal', label:'پورتال مشتریان', icon:'🌐', soon:true},
+    {key:'contracts', label:'قراردادها', icon:'📜', soon:true},
+    {key:'proforma', label:'پیش فاکتور', icon:'🧾', soon:true},
+    {key:'invoices', label:'فاکتورها', icon:'💳', soon:true},
+  ];
+
+  async function renderCustomers() {
+    const section = document.getElementById('view-customers');
+    if (!section) return;
+    const isAdmin = state.me?.role === 'ADMIN' || state.me?.role === 'CEO';
+    section.innerHTML = `
+      <h1>🤝 مشتریان</h1>
+      <p class="hint" style="margin-bottom:16px;">مدیریت اشخاص حقیقی، شرکت‌های مشتری و اسناد مرتبط — قراردادها، پیش‌فاکتور و فاکتور به‌زودی فعال می‌شوند.</p>
+      <div class="tabs" style="margin-bottom:16px;flex-wrap:wrap;">
+        ${CUSTOMER_TABS.map(t => `<button class="tab ${customersTab===t.key?'active':''}" data-ctab="${t.key}" ${t.soon?'disabled style="opacity:0.5;cursor:not-allowed;"':''}>${t.icon} ${t.label}${t.soon?' <small style="font-size:9px;color:#94a3b8;">به‌زودی</small>':''}</button>`).join('')}
+      </div>
+      <div id="customersContent"></div>`;
+    section.querySelectorAll('[data-ctab]').forEach(b => b.addEventListener('click', () => {
+      if (b.disabled) return;
+      customersTab = b.dataset.ctab;
+      renderCustomers();
+    }));
+    const content = document.getElementById('customersContent');
+    if (!content) return;
+    try {
+      if (customersTab === 'persons') await renderPersonsList(content, isAdmin);
+      else if (customersTab === 'companies') await renderCompaniesListForCustomers(content, isAdmin);
+      else content.innerHTML = `<div class="empty-state" style="text-align:center;padding:40px 20px;color:#94a3b8;">
+        <div style="font-size:48px;margin-bottom:12px;">🚧</div>
+        <h3 style="margin:0 0 8px;">این بخش به‌زودی فعال خواهد شد</h3>
+        <p style="font-size:13px;max-width:400px;margin:0 auto;">این ویژگی در نسخه‌های بعدی اضافه خواهد شد. اکنون می‌توانید با تعریف اشخاص و شرکت‌های مشتری، زیرساخت اولیه را فراهم کنید.</p>
+      </div>`;
+    } catch(e) { content.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
+  }
+  window.__renderCustomers = renderCustomers;
+
+  // اشخاص (Persons)
+  async function renderPersonsList(content, isAdmin) {
+    const [persons, companies] = await Promise.all([
+      api('/persons'),
+      api('/companies').catch(()=>[]),
+    ]);
+    content.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+        <div><h3 style="margin:0;">👤 اشخاص مشتری</h3><p class="hint" style="margin-top:2px;">اشخاص حقیقی که به‌عنوان مشتری دفتر ثبت می‌شوند — مجزا از کاربران داخلی.</p></div>
+        <div style="display:flex;gap:8px;">
+          <input id="personSearch" class="field" placeholder="🔍 جستجوی نام/کد/کدملی/تلفن" style="width:240px;" oninput="window.__searchPersons()">
+          ${isAdmin ? '<button class="btn primary small" onclick="window.__newPerson()">＋ شخص جدید</button>' : ''}
+        </div>
+      </div>
+      <div class="table-card" style="overflow-x:auto;">
+        <table class="data-table">
+          <thead><tr><th>کد</th><th>نام و نام خانوادگی</th><th>کد ملی</th><th>تلفن</th><th>ایمیل</th><th>شرکت مرتبط</th><th>وضعیت</th><th>عملیات</th></tr></thead>
+          <tbody id="personsBody">
+            ${persons.length ? persons.map(p => personRow(p, isAdmin)).join('') : `<tr><td colspan="8" style="text-align:center;padding:20px;color:#64748b;">شخصی ثبت نشده — با دکمه «شخص جدید» شروع کنید.</td></tr>`}
+          </tbody>
+        </table>
+      </div>`;
+
+    window.__searchPersons = async () => {
+      const q = document.getElementById('personSearch').value.trim();
+      try {
+        const list = await api('/persons' + (q ? `?q=${encodeURIComponent(q)}` : ''));
+        document.getElementById('personsBody').innerHTML = list.length ? list.map(p=>personRow(p, isAdmin)).join('') : `<tr><td colspan="8" style="text-align:center;padding:20px;color:#64748b;">نتیجه‌ای یافت نشد</td></tr>`;
+      } catch(e) { toast(e.message, true); }
+    };
+
+    window.__newPerson = () => openPersonForm(null, companies, () => renderCustomers());
+    window.__editPerson = (id) => openPersonForm(id, companies, () => renderCustomers());
+    window.__deletePerson = async (id, name) => {
+      if (!confirm(`حذف شخص «${name}»؟ این عمل بازگشت‌ناپذیر است.`)) return;
+      try {
+        await api(`/persons/${id}`, {method:'DELETE'});
+        toast('شخص حذف شد');
+        renderCustomers();
+      } catch(e) { toast(e.message, true); }
+    };
+
+    function personRow(p, isAdmin) {
+      const fullName = `${p.first_name} ${p.last_name}`;
+      return `<tr>
+        <td><code>${esc(p.code)}</code></td>
+        <td><b>${esc(fullName)}</b></td>
+        <td>${esc(p.national_id || '—')}</td>
+        <td>${esc(p.phone || '—')}</td>
+        <td>${esc(p.email || '—')}</td>
+        <td>${p.linked_company_name ? `<span class="tag" style="background:#f0fdfa;color:#0b8f89;">${esc(p.linked_company_name)}</span>` : '—'}</td>
+        <td>${p.active ? '<span style="color:#10b981;">● فعال</span>' : '<span style="color:#94a3b8;">○ غیرفعال</span>'}</td>
+        <td>
+          ${isAdmin ? `
+            <button class="btn soft small" onclick="window.__editPerson('${p.id}')">✎ ویرایش</button>
+            <button class="btn small" style="background:#fee2e2;color:#9f413d;" onclick="window.__deletePerson('${p.id}','${esc(fullName)}')">حذف</button>
+          ` : '<span style="color:#94a3b8;font-size:11px;">فقط مشاهده</span>'}
+        </td>
+      </tr>`;
+    }
+  }
+
+  function openPersonForm(id, companies, onDone) {
+    if (id) {
+      api(`/persons/${id}`).then(p => showForm(p)).catch(e=>toast(e.message, true));
+    } else {
+      showForm(null);
+    }
+    function showForm(p) {
+      const isNew = !p;
+      const companyOpts = (companies||[]).map(c=>`<option value="${esc(c.id)}" ${p && p.linked_company_id===c.id?'selected':''}>${esc(c.name)}</option>`).join('');
+      const body = `
+        <form id="personForm" class="stack">
+          <div class="form-grid">
+            <label>کد شخص <span style="color:#ef4444;">*</span><input class="field" name="code" required value="${p?esc(p.code):''}" ${p?'readonly':''} placeholder="مثلاً P001"></label>
+            <label>نام <span style="color:#ef4444;">*</span><input class="field" name="first_name" required value="${p?esc(p.first_name):''}" placeholder="نام"></label>
+            <label>نام خانوادگی <span style="color:#ef4444;">*</span><input class="field" name="last_name" required value="${p?esc(p.last_name):''}" placeholder="نام خانوادگی"></label>
+            <label>کد ملی<input class="field" name="national_id" value="${p?esc(p.national_id):''}" placeholder="کد ملی"></label>
+            <label>تلفن<input class="field" name="phone" value="${p?esc(p.phone):''}" placeholder="09..."></label>
+            <label>ایمیل<input class="field" name="email" type="email" value="${p?esc(p.email):''}" placeholder="name@example.com"></label>
+            <label>کد پستی<input class="field" name="postal_code" value="${p?esc(p.postal_code):''}"></label>
+            <label>شرکت مرتبط<select class="field" name="linked_company_id"><option value="">— انتخاب —</option>${companyOpts}</select></label>
+            <label class="wide-field">آدرس<input class="field" name="address" value="${p?esc(p.address):''}" placeholder="نشانی کامل"></label>
+            <label class="wide-field">یادداشت<textarea name="notes" rows="3" placeholder="یادداشت داخلی">${p?esc(p.notes||''):''}</textarea></label>
+            <label class="wide-field">
+              <label class="check-row"><input type="checkbox" name="active" ${(!p || p.active)?'checked':''}> شخص فعال</label>
+            </label>
+          </div>
+          <p class="hint">کد شخص پس از ایجاد قابل ویرایش نیست. هر شخص می‌تواند به یک شرکت مرتبط باشد.</p>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px;">
+            <button type="button" class="btn soft" onclick="document.getElementById('modalRoot').innerHTML=''">انصراف</button>
+            <button type="submit" class="btn primary">${isNew?'ایجاد':'ذخیره تغییرات'}</button>
+          </div>
+        </form>`;
+      modal(`${isNew?'＋ شخص جدید':'✎ ویرایش شخص'}`, 'اشخاص حقیقی مشتری — مجزا از کاربران داخلی سامانه.', body);
+      const form = document.getElementById('personForm');
+      if (form) form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const fd = new FormData(form);
+        const data = {
+          code: fd.get('code').trim(),
+          first_name: fd.get('first_name').trim(),
+          last_name: fd.get('last_name').trim(),
+          national_id: fd.get('national_id').trim(),
+          phone: fd.get('phone').trim(),
+          email: fd.get('email').trim(),
+          postal_code: fd.get('postal_code').trim(),
+          linked_company_id: fd.get('linked_company_id') || null,
+          address: fd.get('address').trim(),
+          notes: fd.get('notes').trim(),
+          active: fd.get('active') ? 1 : 0,
+        };
+        try {
+          if (isNew) {
+            await api('/persons', {method:'POST', body:JSON.stringify(data)});
+            toast('شخص جدید ایجاد شد');
+          } else {
+            const {code, ...update} = data;
+            await api(`/persons/${id}`, {method:'PATCH', body:JSON.stringify(update)});
+            toast('تغییرات ذخیره شد');
+          }
+          document.getElementById('modalRoot').innerHTML = '';
+          onDone();
+        } catch(err) { toast(err.message, true); }
+      });
+    }
+  }
+
+  // شرکت‌ها (Companies — reuses existing data, displayed in customers context)
+  async function renderCompaniesListForCustomers(content, isAdmin) {
+    const companies = await api('/companies').catch(()=>[]);
+    content.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+        <div><h3 style="margin:0;">🏢 شرکت‌های مشتری</h3><p class="hint" style="margin-top:2px;">فهرست شرکت‌های حقوقی — مدیریت کامل از تب «تنظیمات → تعریف شرکت».</p></div>
+      </div>
+      <div class="table-card" style="overflow-x:auto;">
+        <table class="data-table">
+          <thead><tr><th>کد</th><th>نام</th><th>نوع</th><th>شناسه ملی</th><th>مدیر</th><th>تلفن</th><th>وضعیت</th></tr></thead>
+          <tbody>
+            ${companies.length ? companies.map(c => `
+              <tr>
+                <td><code>${esc(c.code)}</code></td>
+                <td><b>${esc(c.kind==='REAL' ? `${c.first_name} ${c.last_name}` : c.name)}</b></td>
+                <td>${c.kind==='REAL'?'<span class="tag" style="background:#fef3c7;color:#92400e;">حقیقی</span>':'<span class="tag" style="background:#dbeafe;color:#1e40af;">حقوقی</span>'}</td>
+                <td>${esc(c.national_id || '—')}</td>
+                <td>${esc(c.manager_name || '—')}</td>
+                <td>${esc(c.phone || c.manager_phone || '—')}</td>
+                <td>${c.active?'<span style="color:#10b981;">● فعال</span>':'<span style="color:#94a3b8;">○ غیرفعال</span>'}</td>
+              </tr>`).join('') : `<tr><td colspan="7" style="text-align:center;padding:20px;color:#64748b;">شرکتی ثبت نشده</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+      <p class="hint" style="margin-top:12px;">برای افزودن یا ویرایش شرکت، به <b>تنظیمات → تعریف شرکت</b> مراجعه کنید. تب «مشتریان» برای مشاهده فهرست در کنار اشخاص است.</p>`;
+  }
+
   // ============ REPORTS HUB (تب گزارشات) ============
   // همه گزارش‌های مدیریتی: عملکرد تیم، عملکرد کارکنان، ممیزی و KPI
   let reportsTab = 'team';
@@ -680,6 +1134,7 @@
     {key:'kpi', label:'گزارش KPI', icon:'🎯'},
   ];
 
+  // ============ Reports (گزارشات) ============
   async function renderReports() {
     const section = document.getElementById('view-reports');
     if (!section) return;

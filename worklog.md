@@ -224,3 +224,37 @@ Work Log:
 Stage Summary:
 - GitHub yafgtax.git شامل همه تغییرات است: تب تنظیمات حرفه‌ای (d4d8b68)، تب گزارشات + رمز ۴ نویسه + نسخه 0.3.0.01 (206eb27)
 - سرورها سالم: YFG:8000 و Next:3000 هر دو HTTP 200، نسخه 0.3.0.01
+
+---
+Task ID: chat-messenger-0302 + customers-0302
+Agent: main
+Task: ارتقای تب گفتگو به مسنجر کامل (DM + گروه + فایل) و افزودن تب مشتریان با ۶ زیرتب
+
+Work Log:
+- Backend main.py: ساختار چت بازنویسی شد — chat_messages به ۷ ستون (attachment_id, reply_to, created_at)؛ chat_channel_members با last_read_at و joined_at؛ جدول جدید chat_attachments
+- جدول جدید persons (اشخاص مشتری): code/first_name/last_name/national_id/phone/email/address/postal_code/notes/linked_company_id/active
+- ۱۳ endpoint جدید: GET/POST /api/chat/channels, GET/PATCH /api/chat/channels/{id}, POST /members, GET/POST /messages, POST /read, POST /upload (file), GET /attachments/{id}, GET /chat/users, GET/POST /api/persons, GET/PATCH/DELETE /api/persons/{id}
+- جلوگیری DM با خود، احتکار DM (یک کانال DIRECT برای هر جفت کاربر)، چک عضویت در همه endpoints
+- پیوست‌ها تا ۲۵MB، allowlist پسوند (تصویر/PDF/اکسل/ورد/فشرده)، SHA256 و MIME ذخیره
+- مهاجرت دیتابیس زنده: ALTER chat_messages, chat_channel_members + CREATE chat_attachments, persons + ایجاد دایرکتوری attachments
+- مجوزهای جدید در PERMISSION_CATALOG: customers.view (ALL) و customers.manage (ADMIN, CEO)
+- Frontend enhanced.js:
+  • renderChat کامل بازنویسی شد: لیست کانال با unread badge، هدر داینامیک (نام گروه + اکشن‌های فقط مالک/مدیر)، رندر پیام با bubble، textarea multi-line، دکمه پیوست، polling هر ۵s
+  • ۳ مودال جدید: openChatUserPicker (DM)، openChatUserMultiPicker (افزودن عضو)، openChatGroupModal (نام+اعضا)
+  • renderCustomers با ۶ زیرتب: اشخاص ✓، شرکت‌ها ✓، پورتال/قرارداد/پیش‌فاکتور/فاکتور (همه disabled با نشان «به‌زودی»)
+  • renderPersonsList با جستجو + جدول + عملیات ویرایش/حذف (RBAC)
+  • openPersonForm با فرم کامل (کد، نام، فامیل، کد ملی، تلفن، ایمیل، کد پستی، شرکت مرتبط، آدرس، یادداشت، فعال)
+  • renderCompaniesListForCustomers: فهرست شرکت‌های موجود با نوع (حقیقی/حقوقی)
+- Frontend index.html: افزودن nav-item «🤝 مشتریان» + view-customers section
+- Frontend app.js: routing customers → window.__renderCustomers؛ عنوان مشتریان
+- نسخه: 0.3.0.01 → 0.3.0.02 (در main.py، index.html، app.js، sw.js)
+- Service Worker: v14 → v15 + updateViaCache:none + ?v=15 در register
+- sync_static.sh اجرا شد تا public/static همگام شود با upload/extracted/YFG-Accounting/app/static
+- تست E2E مرورگر: ورود → مشتریان (۶ زیرتب، فرم شخص با همه فیلدها، ساخت P001 علی رضایی ✓) → گفتگو (DM با کارمند تست، ارسال پیام، نمایش در bubble ✓) → گزارشات → تنظیمات همه پاس
+- داده‌های تست پاک شدند (persons, chat_messages, chat_channels, chat_channel_members, chat_attachments)
+
+Stage Summary:
+- نسخه 0.3.0.02 با تب مشتریان و مسنجر کامل
+- گفتگو: DM + گروه، آپلود فایل، polling، unread badge، read receipts
+- مشتریان: ۶ زیرتب (۲ فعال، ۴ به‌زودی)
+- نکته نگهداری: بعد از تغییر فایل‌های استاتیک باید scripts/sync_static.sh اجرا شود
