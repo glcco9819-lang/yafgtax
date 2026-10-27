@@ -20,7 +20,7 @@ function showApp(){
  $('#authView').classList.add('hidden');$('#appView').classList.remove('hidden');
  $('#userName').textContent=state.me.name;$('#userRole').textContent=labels[state.me.role];$('#avatar').textContent=state.me.name.trim().slice(0,1);
  $$('.admin-only').forEach(e=>e.classList.toggle('hidden',!['ADMIN','CEO'].includes(state.me.role)));
- if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js?v=17',{updateViaCache:'none'}).catch(()=>{});
+ if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js?v=18',{updateViaCache:'none'}).catch(()=>{});
  loadAll();
 }
 async function loadAll(){try{state.companies=await api('/companies');state.tasks=await api('/tasks');if(['ADMIN','CEO'].includes(state.me.role))state.users=await api('/users');await renderView(state.view);const n=await api('/notifications');$('#notifyDot').classList.toggle('hidden',!n.some(x=>!x.read_at));}catch(e){toast(e.message,true)}}

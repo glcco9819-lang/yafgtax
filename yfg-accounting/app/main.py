@@ -75,7 +75,15 @@ CREATE TABLE IF NOT EXISTS companies(
  created_at TEXT NOT NULL,
  kind TEXT NOT NULL DEFAULT 'LEGAL', first_name TEXT NOT NULL DEFAULT '', last_name TEXT NOT NULL DEFAULT '',
  national_id TEXT NOT NULL DEFAULT '', phone TEXT NOT NULL DEFAULT '', address TEXT NOT NULL DEFAULT '',
- postal_code TEXT NOT NULL DEFAULT '', manager_name TEXT NOT NULL DEFAULT '', manager_phone TEXT NOT NULL DEFAULT ''
+ postal_code TEXT NOT NULL DEFAULT '', manager_name TEXT NOT NULL DEFAULT '', manager_phone TEXT NOT NULL DEFAULT '',
+ description TEXT NOT NULL DEFAULT ''  -- توضیحات شرکت
+);
+CREATE TABLE IF NOT EXISTS company_contacts(
+ id TEXT PRIMARY KEY, company_id TEXT NOT NULL REFERENCES companies(id),
+ contact_type TEXT NOT NULL DEFAULT 'PHONE',  -- PHONE, MOBILE, EMAIL, FAX, WEBSITE, OTHER
+ label TEXT NOT NULL DEFAULT '',  -- مثلاً "تلفن دفتر" یا "همراه مدیر"
+ value TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '',
+ created_by TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS company_access(
  user_id TEXT NOT NULL REFERENCES users(id), company_id TEXT NOT NULL REFERENCES companies(id),
@@ -241,7 +249,54 @@ CREATE TABLE IF NOT EXISTS persons(
  linked_company_id TEXT REFERENCES companies(id), -- optional link to a company
  active INTEGER NOT NULL DEFAULT 1, created_by TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL
 );
--- "Coming soon" placeholders for portal / contracts / proforma / invoices are tracked only as future scope
+-- Phase 4c: Customers — Contracts, Proformas, Invoices (full first version)
+CREATE TABLE IF NOT EXISTS contracts(
+ id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, title TEXT NOT NULL,
+ company_id TEXT NOT NULL REFERENCES companies(id),
+ person_id TEXT REFERENCES persons(id),  -- optional contract signer (real person)
+ start_date TEXT NOT NULL, end_date TEXT NOT NULL,
+ value_amount REAL NOT NULL DEFAULT 0,  -- مبلغ قرارداد
+ currency TEXT NOT NULL DEFAULT 'IRR',  -- IRR / USD / EUR
+ status TEXT NOT NULL DEFAULT 'DRAFT',  -- DRAFT / ACTIVE / COMPLETED / TERMINATED
+ contract_type TEXT NOT NULL DEFAULT 'general',  -- نوع قرارداد: general, accounting, audit, consulting
+ subject TEXT NOT NULL DEFAULT '',  -- موضوع
+ notes TEXT NOT NULL DEFAULT '',
+ attachment_id TEXT,  -- optional file
+ created_by TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS proformas(
+ id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, title TEXT NOT NULL,
+ company_id TEXT NOT NULL REFERENCES companies(id),
+ person_id TEXT REFERENCES persons(id),
+ contract_id TEXT REFERENCES contracts(id),  -- optional link to a contract
+ issue_date TEXT NOT NULL,
+ valid_until TEXT,  -- تاریخ انقضا پیش‌فاکتور
+ status TEXT NOT NULL DEFAULT 'DRAFT',  -- DRAFT / IN_PROGRESS / SENT / ACCEPTED / REJECTED / EXPIRED
+ total_amount REAL NOT NULL DEFAULT 0,
+ currency TEXT NOT NULL DEFAULT 'IRR',
+ items_json TEXT NOT NULL DEFAULT '[]',  -- [{description, qty, unit_price, total, notes}]
+ notes TEXT NOT NULL DEFAULT '',
+ created_by TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS invoices(
+ id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, title TEXT NOT NULL,
+ company_id TEXT NOT NULL REFERENCES companies(id),
+ person_id TEXT REFERENCES persons(id),
+ proforma_id TEXT REFERENCES proformas(id),  -- optional link to source proforma
+ contract_id TEXT REFERENCES contracts(id),  -- optional link to contract
+ issue_date TEXT NOT NULL,
+ due_date TEXT,  -- تاریخ سررسید
+ status TEXT NOT NULL DEFAULT 'DRAFT',  -- DRAFT / UNPAID / PARTIAL / PAID / OVERDUE / CANCELLED
+ total_amount REAL NOT NULL DEFAULT 0,
+ paid_amount REAL NOT NULL DEFAULT 0,
+ currency TEXT NOT NULL DEFAULT 'IRR',
+ items_json TEXT NOT NULL DEFAULT '[]',
+ notes TEXT NOT NULL DEFAULT '',
+ created_by TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
 
 -- Phase 5: ISO 30414 HR Metrics Snapshots
 CREATE TABLE IF NOT EXISTS iso30414_snapshots(
@@ -605,6 +660,9 @@ PERMISSION_CATALOG = [
     {"group": "مشتریان", "items": [
         {"key": "customers.view", "label": "مشاهده اشخاص و شرکت‌های مشتری", "roles": ["ADMIN", "CEO", "EMPLOYEE"]},
         {"key": "customers.manage", "label": "تعریف/ویرایش/حذف اشخاص مشتری", "roles": ["ADMIN", "CEO"]},
+        {"key": "customers.contracts", "label": "مدیریت قراردادها", "roles": ["ADMIN", "CEO"]},
+        {"key": "customers.proformas", "label": "مدیریت پیش فاکتورها", "roles": ["ADMIN", "CEO"]},
+        {"key": "customers.invoices", "label": "مدیریت فاکتورها", "roles": ["ADMIN", "CEO"]},
     ]},
 ]
 
@@ -1108,6 +1166,7 @@ class CompanyCreate(BaseModel):
     postal_code: str = Field(default="", max_length=20)
     manager_name: str = Field(default="", max_length=120)
     manager_phone: str = Field(default="", max_length=30)
+    description: str = Field(default="", max_length=4000)
 
 
 class CompanyUpdate(BaseModel):
@@ -1122,6 +1181,7 @@ class CompanyUpdate(BaseModel):
     postal_code: str | None = None
     manager_name: str | None = None
     manager_phone: str | None = None
+    description: str | None = None
     active: bool | None = None
 
 
@@ -1265,7 +1325,7 @@ def service_worker():
 @app.get("/api/status")
 def status():
     with db() as con:
-        return {"setup_needed": con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0, "product": "YFG Accounting Desk", "version": "0.3.0.04"}
+        return {"setup_needed": con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0, "product": "YFG Accounting Desk", "version": "0.3.0.05"}
 
 
 @app.post("/api/setup")
@@ -1457,11 +1517,11 @@ def add_company(payload: CompanyCreate, request: Request):
         company_id = uid()
         try:
             con.execute(
-                "INSERT INTO companies(id,code,name,active,created_at,kind,first_name,last_name,national_id,phone,address,postal_code,manager_name,manager_phone) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO companies(id,code,name,active,created_at,kind,first_name,last_name,national_id,phone,address,postal_code,manager_name,manager_phone,description) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (company_id, payload.code.strip(), name, 1, now(), payload.kind,
                  payload.first_name.strip(), payload.last_name.strip(), payload.national_id.strip(),
                  payload.phone.strip(), payload.address.strip(), payload.postal_code.strip(),
-                 payload.manager_name.strip(), payload.manager_phone.strip())
+                 payload.manager_name.strip(), payload.manager_phone.strip(), payload.description.strip() if payload.description else "")
             )
         except sqlite3.IntegrityError:
             raise HTTPException(409, "کد شرکت تکراری است")
@@ -1656,6 +1716,8 @@ def update_company(company_id: str, payload: CompanyUpdate, request: Request):
             value = getattr(payload, field)
             if value is not None:
                 updates[field] = value.strip()
+        if payload.description is not None:
+            updates["description"] = payload.description.strip()
         if payload.active is not None:
             updates["active"] = 1 if payload.active else 0
         if updates:
@@ -2996,6 +3058,105 @@ class PersonUpdateModel(BaseModel):
     linked_company_id: str | None = None
     active: int | None = None
 
+# ===== Contracts / Proformas / Invoices models =====
+class ContractCreateModel(BaseModel):
+    code: str
+    title: str
+    company_id: str
+    person_id: str | None = None
+    start_date: str  # ISO YYYY-MM-DD
+    end_date: str
+    value_amount: float = 0
+    currency: str = "IRR"
+    status: str = "DRAFT"
+    contract_type: str = "general"
+    subject: str = ""
+    notes: str = ""
+
+class ContractUpdateModel(BaseModel):
+    title: str | None = None
+    company_id: str | None = None
+    person_id: str | None = None
+    start_date: str | None = None
+    end_date: str | None = None
+    value_amount: float | None = None
+    currency: str | None = None
+    status: str | None = None
+    contract_type: str | None = None
+    subject: str | None = None
+    notes: str | None = None
+
+class ProformaItemModel(BaseModel):
+    description: str
+    qty: float = 1
+    unit_price: float = 0
+    total: float | None = None
+    notes: str = ""
+
+class ProformaCreateModel(BaseModel):
+    code: str
+    title: str
+    company_id: str
+    person_id: str | None = None
+    contract_id: str | None = None
+    issue_date: str
+    valid_until: str | None = None
+    status: str = "DRAFT"
+    total_amount: float = 0
+    currency: str = "IRR"
+    items: list[dict] = []  # use list[dict] for flexibility (Pydantic v2)
+    notes: str = ""
+
+class ProformaUpdateModel(BaseModel):
+    title: str | None = None
+    company_id: str | None = None
+    person_id: str | None = None
+    contract_id: str | None = None
+    issue_date: str | None = None
+    valid_until: str | None = None
+    status: str | None = None
+    total_amount: float | None = None
+    currency: str | None = None
+    items: list[dict] | None = None
+    notes: str | None = None
+
+class InvoiceCreateModel(BaseModel):
+    code: str
+    title: str
+    company_id: str
+    person_id: str | None = None
+    proforma_id: str | None = None
+    contract_id: str | None = None
+    issue_date: str
+    due_date: str | None = None
+    status: str = "DRAFT"
+    total_amount: float = 0
+    paid_amount: float = 0
+    currency: str = "IRR"
+    items: list[dict] = []
+    notes: str = ""
+
+class InvoiceUpdateModel(BaseModel):
+    title: str | None = None
+    company_id: str | None = None
+    person_id: str | None = None
+    proforma_id: str | None = None
+    contract_id: str | None = None
+    issue_date: str | None = None
+    due_date: str | None = None
+    status: str | None = None
+    total_amount: float | None = None
+    paid_amount: float | None = None
+    currency: str | None = None
+    items: list[dict] | None = None
+    notes: str | None = None
+
+class CompanyContactCreateModel(BaseModel):
+    contact_type: str = "PHONE"
+    label: str = ""
+    value: str
+    notes: str = ""
+
 @app.get("/api/persons")
 def list_persons(request: Request, q: str = ""):
     user = current_user(request)
@@ -3090,8 +3251,509 @@ def delete_person(person_id: str, request: Request):
 
 
 # ========================================================================
-# PHASE 5: ISO 30414 HR METRICS API
+# CONTRACTS API (قراردادها) — full first version
 # ========================================================================
+def _contract_dict(row, con) -> dict:
+    d = dict(row)
+    if d.get("company_id"):
+        company = con.execute("SELECT name FROM companies WHERE id=?", (d["company_id"],)).fetchone()
+        d["company_name"] = company["name"] if company else None
+    if d.get("person_id"):
+        person = con.execute("SELECT first_name, last_name FROM persons WHERE id=?", (d["person_id"],)).fetchone()
+        if person:
+            d["person_name"] = f"{person['first_name']} {person['last_name']}".strip()
+    # Compute is_active based on current date being within contract range
+    today = now()[:10]
+    d["is_currently_active"] = (d["status"] == "ACTIVE" and d["start_date"] <= today <= d["end_date"])
+    return d
+
+@app.get("/api/contracts")
+def list_contracts(request: Request, status: str = "", active: int = 0, company_id: str = ""):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        sql = """SELECT c.* FROM contracts c WHERE 1=1"""
+        params: list = []
+        if status:
+            sql += " AND c.status=?"
+            params.append(status)
+        if active == 1:
+            today = now()[:10]
+            sql += " AND c.status='ACTIVE' AND c.start_date<=? AND c.end_date>=?"
+            params.extend([today, today])
+        if company_id:
+            sql += " AND c.company_id=?"
+            params.append(company_id)
+        sql += " ORDER BY c.start_date DESC, c.created_at DESC"
+        rows = con.execute(sql, params).fetchall()
+        return [_contract_dict(r, con) for r in rows]
+
+@app.get("/api/contracts/active")
+def list_active_contracts(request: Request):
+    """Returns only contracts where today's date is within the contract's date range."""
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        today = now()[:10]
+        rows = con.execute("""SELECT * FROM contracts
+                              WHERE status='ACTIVE' AND start_date<=? AND end_date>=?
+                              ORDER BY end_date ASC""", (today, today)).fetchall()
+        return [_contract_dict(r, con) for r in rows]
+
+@app.get("/api/contracts/{contract_id}")
+def get_contract(contract_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        r = con.execute("SELECT * FROM contracts WHERE id=?", (contract_id,)).fetchone()
+        if not r: raise HTTPException(404, "قرارداد پیدا نشد")
+        return _contract_dict(r, con)
+
+@app.post("/api/contracts")
+def create_contract(payload: ContractCreateModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.contracts")
+    if not payload.code.strip() or not payload.title.strip() or not payload.company_id:
+        raise HTTPException(400, "کد، عنوان و شرکت الزامی است")
+    if payload.end_date < payload.start_date:
+        raise HTTPException(400, "تاریخ پایان نباید قبل از شروع باشد")
+    if payload.status not in ("DRAFT","ACTIVE","COMPLETED","TERMINATED"):
+        raise HTTPException(400, "وضعیت نامعتبر")
+    cid = uid()
+    ts = now()
+    with db() as con:
+        try:
+            con.execute("""INSERT INTO contracts
+                (id, code, title, company_id, person_id, start_date, end_date, value_amount, currency, status, contract_type, subject, notes, attachment_id, created_by, created_at, updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (cid, payload.code.strip(), payload.title.strip(), payload.company_id, payload.person_id,
+                 payload.start_date, payload.end_date, float(payload.value_amount), payload.currency,
+                 payload.status, payload.contract_type, payload.subject, payload.notes, None, user["id"], ts, ts))
+        except Exception as e:
+            if "UNIQUE" in str(e): raise HTTPException(400, "کد قرارداد تکراری است")
+            raise
+        audit(con, user["id"], "CONTRACT_CREATE", "contract", cid, {"code": payload.code, "title": payload.title})
+    return {"id": cid, "code": payload.code}
+
+@app.patch("/api/contracts/{contract_id}")
+def update_contract(contract_id: str, payload: ContractUpdateModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.contracts")
+    with db() as con:
+        existing = con.execute("SELECT * FROM contracts WHERE id=?", (contract_id,)).fetchone()
+        if not existing: raise HTTPException(404, "قرارداد پیدا نشد")
+        if payload.end_date and payload.start_date and payload.end_date < payload.start_date:
+            raise HTTPException(400, "تاریخ پایان نباید قبل از شروع باشد")
+        updates = []
+        params = []
+        for k, v in payload.model_dump(exclude_unset=True).items():
+            if v is None: continue
+            updates.append(f"{k}=?")
+            params.append(v)
+        if not updates:
+            return {"ok": True, "updated": 0}
+        updates.append("updated_at=?")
+        params.append(now())
+        params.append(contract_id)
+        con.execute(f"UPDATE contracts SET {', '.join(updates)} WHERE id=?", params)
+        audit(con, user["id"], "CONTRACT_UPDATE", "contract", contract_id, {"fields": updates})
+    return {"ok": True, "updated": len(updates) - 1}
+
+@app.delete("/api/contracts/{contract_id}")
+def delete_contract(contract_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.contracts")
+    with db() as con:
+        existing = con.execute("SELECT * FROM contracts WHERE id=?", (contract_id,)).fetchone()
+        if not existing: raise HTTPException(404, "قرارداد پیدا نشد")
+        # Check if invoices/proformas reference this contract
+        cnt = con.execute("SELECT COUNT(*) FROM invoices WHERE contract_id=?", (contract_id,)).fetchone()[0]
+        cnt += con.execute("SELECT COUNT(*) FROM proformas WHERE contract_id=?", (contract_id,)).fetchone()[0]
+        if cnt > 0:
+            # Soft delete: change status to TERMINATED
+            con.execute("UPDATE contracts SET status='TERMINATED', updated_at=? WHERE id=?", (now(), contract_id))
+            audit(con, user["id"], "CONTRACT_TERMINATE", "contract", contract_id, {"usage": cnt})
+            return {"ok": True, "terminated": True}
+        con.execute("DELETE FROM contracts WHERE id=?", (contract_id,))
+        audit(con, user["id"], "CONTRACT_DELETE", "contract", contract_id, {"code": existing["code"]})
+    return {"ok": True, "terminated": False}
+
+
+# ========================================================================
+# PROFORMAS API (پیش فاکتور)
+# ========================================================================
+def _proforma_dict(row, con) -> dict:
+    d = dict(row)
+    try:
+        d["items"] = json.loads(row["items_json"]) if row["items_json"] else []
+    except Exception:
+        d["items"] = []
+    del d["items_json"]
+    if d.get("company_id"):
+        company = con.execute("SELECT name FROM companies WHERE id=?", (d["company_id"],)).fetchone()
+        d["company_name"] = company["name"] if company else None
+    if d.get("person_id"):
+        person = con.execute("SELECT first_name, last_name FROM persons WHERE id=?", (d["person_id"],)).fetchone()
+        if person:
+            d["person_name"] = f"{person['first_name']} {person['last_name']}".strip()
+    if d.get("contract_id"):
+        contract = con.execute("SELECT code, title FROM contracts WHERE id=?", (d["contract_id"],)).fetchone()
+        if contract:
+            d["contract_code"] = contract["code"]
+            d["contract_title"] = contract["title"]
+    return d
+
+@app.get("/api/proformas")
+def list_proformas(request: Request, status: str = "", in_progress: int = 0, company_id: str = ""):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        sql = """SELECT * FROM proformas WHERE 1=1"""
+        params: list = []
+        if status:
+            sql += " AND status=?"
+            params.append(status)
+        if in_progress == 1:
+            sql += " AND status IN ('DRAFT','IN_PROGRESS','SENT')"
+        if company_id:
+            sql += " AND company_id=?"
+            params.append(company_id)
+        sql += " ORDER BY issue_date DESC, created_at DESC"
+        rows = con.execute(sql, params).fetchall()
+        return [_proforma_dict(r, con) for r in rows]
+
+@app.get("/api/proformas/in-progress")
+def list_in_progress_proformas(request: Request):
+    """Returns proformas that are still in progress (DRAFT, IN_PROGRESS, SENT)."""
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        rows = con.execute("""SELECT * FROM proformas
+                              WHERE status IN ('DRAFT','IN_PROGRESS','SENT')
+                              ORDER BY issue_date DESC, created_at DESC""").fetchall()
+        return [_proforma_dict(r, con) for r in rows]
+
+@app.get("/api/proformas/{proforma_id}")
+def get_proforma(proforma_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        r = con.execute("SELECT * FROM proformas WHERE id=?", (proforma_id,)).fetchone()
+        if not r: raise HTTPException(404, "پیش فاکتور پیدا نشد")
+        return _proforma_dict(r, con)
+
+@app.post("/api/proformas")
+def create_proforma(payload: ProformaCreateModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.proformas")
+    if not payload.code.strip() or not payload.title.strip() or not payload.company_id:
+        raise HTTPException(400, "کد، عنوان و شرکت الزامی است")
+    if payload.status not in ("DRAFT","IN_PROGRESS","SENT","ACCEPTED","REJECTED","EXPIRED"):
+        raise HTTPException(400, "وضعیت نامعتبر")
+    pid = uid()
+    ts = now()
+    items_json = json.dumps(payload.items, ensure_ascii=False) if payload.items else "[]"
+    # Auto-calculate total_amount if items are provided and total is 0
+    total = float(payload.total_amount)
+    if not total and payload.items:
+        total = sum((float(i.get("qty",1)) * float(i.get("unit_price",0))) for i in payload.items if isinstance(i, dict))
+    with db() as con:
+        try:
+            con.execute("""INSERT INTO proformas
+                (id, code, title, company_id, person_id, contract_id, issue_date, valid_until, status, total_amount, currency, items_json, notes, created_by, created_at, updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (pid, payload.code.strip(), payload.title.strip(), payload.company_id, payload.person_id,
+                 payload.contract_id, payload.issue_date, payload.valid_until, payload.status, total,
+                 payload.currency, items_json, payload.notes, user["id"], ts, ts))
+        except Exception as e:
+            if "UNIQUE" in str(e): raise HTTPException(400, "کد پیش فاکتور تکراری است")
+            raise
+        audit(con, user["id"], "PROFORMA_CREATE", "proforma", pid, {"code": payload.code, "title": payload.title})
+    return {"id": pid, "code": payload.code}
+
+@app.patch("/api/proformas/{proforma_id}")
+def update_proforma(proforma_id: str, payload: ProformaUpdateModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.proformas")
+    with db() as con:
+        existing = con.execute("SELECT * FROM proformas WHERE id=?", (proforma_id,)).fetchone()
+        if not existing: raise HTTPException(404, "پیش فاکتور پیدا نشد")
+        updates = []
+        params = []
+        for k, v in payload.model_dump(exclude_unset=True).items():
+            if v is None: continue
+            if k == "items":
+                updates.append("items_json=?")
+                params.append(json.dumps(v, ensure_ascii=False))
+                # Auto-recalculate total if not provided in same payload
+                if payload.total_amount is None:
+                    new_total = sum((float(i.get("qty",1)) * float(i.get("unit_price",0))) for i in v if isinstance(i, dict))
+                    updates.append("total_amount=?")
+                    params.append(new_total)
+            else:
+                updates.append(f"{k}=?")
+                params.append(v)
+        if not updates:
+            return {"ok": True, "updated": 0}
+        updates.append("updated_at=?")
+        params.append(now())
+        params.append(proforma_id)
+        con.execute(f"UPDATE proformas SET {', '.join(updates)} WHERE id=?", params)
+        audit(con, user["id"], "PROFORMA_UPDATE", "proforma", proforma_id, {"fields": updates})
+    return {"ok": True, "updated": len(updates) - 1}
+
+@app.delete("/api/proformas/{proforma_id}")
+def delete_proforma(proforma_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.proformas")
+    with db() as con:
+        existing = con.execute("SELECT * FROM proformas WHERE id=?", (proforma_id,)).fetchone()
+        if not existing: raise HTTPException(404, "پیش فاکتور پیدا نشد")
+        # Check if invoices reference this proforma
+        cnt = con.execute("SELECT COUNT(*) FROM invoices WHERE proforma_id=?", (proforma_id,)).fetchone()[0]
+        if cnt > 0:
+            con.execute("UPDATE proformas SET status='REJECTED', updated_at=? WHERE id=?", (now(), proforma_id))
+            audit(con, user["id"], "PROFORMA_REJECT", "proforma", proforma_id, {"usage": cnt})
+            return {"ok": True, "rejected": True}
+        con.execute("DELETE FROM proformas WHERE id=?", (proforma_id,))
+        audit(con, user["id"], "PROFORMA_DELETE", "proforma", proforma_id, {"code": existing["code"]})
+    return {"ok": True, "rejected": False}
+
+
+# ========================================================================
+# INVOICES API (فاکتورها)
+# ========================================================================
+def _invoice_dict(row, con) -> dict:
+    d = dict(row)
+    try:
+        d["items"] = json.loads(row["items_json"]) if row["items_json"] else []
+    except Exception:
+        d["items"] = []
+    del d["items_json"]
+    if d.get("company_id"):
+        company = con.execute("SELECT name FROM companies WHERE id=?", (d["company_id"],)).fetchone()
+        d["company_name"] = company["name"] if company else None
+    if d.get("person_id"):
+        person = con.execute("SELECT first_name, last_name FROM persons WHERE id=?", (d["person_id"],)).fetchone()
+        if person:
+            d["person_name"] = f"{person['first_name']} {person['last_name']}".strip()
+    if d.get("proforma_id"):
+        proforma = con.execute("SELECT code, title FROM proformas WHERE id=?", (d["proforma_id"],)).fetchone()
+        if proforma:
+            d["proforma_code"] = proforma["code"]
+    if d.get("contract_id"):
+        contract = con.execute("SELECT code, title FROM contracts WHERE id=?", (d["contract_id"],)).fetchone()
+        if contract:
+            d["contract_code"] = contract["code"]
+    # Compute balance
+    d["balance"] = float(d["total_amount"]) - float(d["paid_amount"])
+    return d
+
+@app.get("/api/invoices")
+def list_invoices(request: Request, status: str = "", unpaid: int = 0, company_id: str = ""):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        sql = """SELECT * FROM invoices WHERE 1=1"""
+        params: list = []
+        if status:
+            sql += " AND status=?"
+            params.append(status)
+        if unpaid == 1:
+            sql += " AND status IN ('UNPAID','PARTIAL','OVERDUE')"
+        if company_id:
+            sql += " AND company_id=?"
+            params.append(company_id)
+        sql += " ORDER BY issue_date DESC, created_at DESC"
+        rows = con.execute(sql, params).fetchall()
+        return [_invoice_dict(r, con) for r in rows]
+
+@app.get("/api/invoices/unpaid")
+def list_unpaid_invoices(request: Request):
+    """Returns invoices that are unsettled (UNPAID, PARTIAL, OVERDUE)."""
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        rows = con.execute("""SELECT * FROM invoices
+                              WHERE status IN ('UNPAID','PARTIAL','OVERDUE')
+                              ORDER BY due_date ASC NULLS LAST, issue_date DESC""").fetchall()
+        return [_invoice_dict(r, con) for r in rows]
+
+@app.get("/api/invoices/{invoice_id}")
+def get_invoice(invoice_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        r = con.execute("SELECT * FROM invoices WHERE id=?", (invoice_id,)).fetchone()
+        if not r: raise HTTPException(404, "فاکتور پیدا نشد")
+        return _invoice_dict(r, con)
+
+@app.post("/api/invoices")
+def create_invoice(payload: InvoiceCreateModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.invoices")
+    if not payload.code.strip() or not payload.title.strip() or not payload.company_id:
+        raise HTTPException(400, "کد، عنوان و شرکت الزامی است")
+    if payload.status not in ("DRAFT","UNPAID","PARTIAL","PAID","OVERDUE","CANCELLED"):
+        raise HTTPException(400, "وضعیت نامعتبر")
+    iid = uid()
+    ts = now()
+    items_json = json.dumps(payload.items, ensure_ascii=False) if payload.items else "[]"
+    total = float(payload.total_amount)
+    if not total and payload.items:
+        total = sum((float(i.get("qty",1)) * float(i.get("unit_price",0))) for i in payload.items if isinstance(i, dict))
+    with db() as con:
+        try:
+            con.execute("""INSERT INTO invoices
+                (id, code, title, company_id, person_id, proforma_id, contract_id, issue_date, due_date, status, total_amount, paid_amount, currency, items_json, notes, created_by, created_at, updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (iid, payload.code.strip(), payload.title.strip(), payload.company_id, payload.person_id,
+                 payload.proforma_id, payload.contract_id, payload.issue_date, payload.due_date,
+                 payload.status, total, float(payload.paid_amount), payload.currency,
+                 items_json, payload.notes, user["id"], ts, ts))
+        except Exception as e:
+            if "UNIQUE" in str(e): raise HTTPException(400, "کد فاکتور تکراری است")
+            raise
+        audit(con, user["id"], "INVOICE_CREATE", "invoice", iid, {"code": payload.code, "title": payload.title})
+    return {"id": iid, "code": payload.code}
+
+@app.patch("/api/invoices/{invoice_id}")
+def update_invoice(invoice_id: str, payload: InvoiceUpdateModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.invoices")
+    with db() as con:
+        existing = con.execute("SELECT * FROM invoices WHERE id=?", (invoice_id,)).fetchone()
+        if not existing: raise HTTPException(404, "فاکتور پیدا نشد")
+        updates = []
+        params = []
+        for k, v in payload.model_dump(exclude_unset=True).items():
+            if v is None: continue
+            if k == "items":
+                updates.append("items_json=?")
+                params.append(json.dumps(v, ensure_ascii=False))
+                if payload.total_amount is None:
+                    new_total = sum((float(i.get("qty",1)) * float(i.get("unit_price",0))) for i in v if isinstance(i, dict))
+                    updates.append("total_amount=?")
+                    params.append(new_total)
+            else:
+                updates.append(f"{k}=?")
+                params.append(v)
+        # Auto-update status if paid_amount >= total_amount
+        if payload.paid_amount is not None and payload.status is None:
+            new_paid = float(payload.paid_amount)
+            new_total = float(existing["total_amount"]) if payload.total_amount is None else float(payload.total_amount)
+            if new_paid >= new_total and new_total > 0:
+                updates.append("status=?")
+                params.append("PAID")
+            elif new_paid > 0 and new_paid < new_total:
+                updates.append("status=?")
+                params.append("PARTIAL")
+        if not updates:
+            return {"ok": True, "updated": 0}
+        updates.append("updated_at=?")
+        params.append(now())
+        params.append(invoice_id)
+        con.execute(f"UPDATE invoices SET {', '.join(updates)} WHERE id=?", params)
+        audit(con, user["id"], "INVOICE_UPDATE", "invoice", invoice_id, {"fields": updates})
+    return {"ok": True, "updated": len(updates) - 1}
+
+@app.delete("/api/invoices/{invoice_id}")
+def delete_invoice(invoice_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.invoices")
+    with db() as con:
+        existing = con.execute("SELECT * FROM invoices WHERE id=?", (invoice_id,)).fetchone()
+        if not existing: raise HTTPException(404, "فاکتور پیدا نشد")
+        con.execute("DELETE FROM invoices WHERE id=?", (invoice_id,))
+        audit(con, user["id"], "INVOICE_DELETE", "invoice", invoice_id, {"code": existing["code"]})
+    return {"ok": True}
+
+
+# ========================================================================
+# COMPANY CONTACTS API (تماس‌های متعدد شرکت)
+# ========================================================================
+@app.get("/api/companies/{company_id}/contacts")
+def list_company_contacts(company_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        if not con.execute("SELECT 1 FROM companies WHERE id=?", (company_id,)).fetchone():
+            raise HTTPException(404, "شرکت پیدا نشد")
+        rows = con.execute("SELECT * FROM company_contacts WHERE company_id=? ORDER BY created_at DESC", (company_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+@app.post("/api/companies/{company_id}/contacts")
+def add_company_contact(company_id: str, payload: CompanyContactCreateModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    with db() as con:
+        if not con.execute("SELECT 1 FROM companies WHERE id=?", (company_id,)).fetchone():
+            raise HTTPException(404, "شرکت پیدا نشد")
+        if payload.contact_type not in ("PHONE","MOBILE","EMAIL","FAX","WEBSITE","OTHER"):
+            raise HTTPException(400, "نوع تماس نامعتبر")
+        if not payload.value.strip():
+            raise HTTPException(400, "مقدار تماس الزامی است")
+        cid = uid()
+        con.execute("INSERT INTO company_contacts (id, company_id, contact_type, label, value, notes, created_by, created_at) VALUES(?,?,?,?,?,?,?,?)",
+                    (cid, company_id, payload.contact_type, payload.label, payload.value.strip(), payload.notes, user["id"], now()))
+        audit(con, user["id"], "COMPANY_CONTACT_ADD", "company_contact", cid, {"company_id": company_id, "type": payload.contact_type})
+    return {"id": cid}
+
+@app.delete("/api/companies/{company_id}/contacts/{contact_id}")
+def delete_company_contact(company_id: str, contact_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    with db() as con:
+        existing = con.execute("SELECT * FROM company_contacts WHERE id=? AND company_id=?", (contact_id, company_id)).fetchone()
+        if not existing: raise HTTPException(404, "تماس پیدا نشد")
+        con.execute("DELETE FROM company_contacts WHERE id=?", (contact_id,))
+        audit(con, user["id"], "COMPANY_CONTACT_DELETE", "company_contact", contact_id, {"company_id": company_id})
+    return {"ok": True}
+
+
+# ========================================================================
+# CUSTOMERS DASHBOARD STATS (۳ کارت آماری)
+# ========================================================================
+@app.get("/api/customers/stats")
+def customers_stats(request: Request):
+    """Returns: count of active contracts, in-progress proformas, unpaid invoices, plus totals."""
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        today = now()[:10]
+        # Active contracts: status=ACTIVE and today is within [start_date, end_date]
+        active_contracts = con.execute("""SELECT COUNT(*) FROM contracts
+            WHERE status='ACTIVE' AND start_date<=? AND end_date>=?""", (today, today)).fetchone()[0]
+        # In-progress proformas: status IN (DRAFT, IN_PROGRESS, SENT)
+        in_progress_proformas = con.execute("""SELECT COUNT(*) FROM proformas
+            WHERE status IN ('DRAFT','IN_PROGRESS','SENT')""").fetchone()[0]
+        # Unpaid invoices: status IN (UNPAID, PARTIAL, OVERDUE)
+        unpaid_invoices = con.execute("""SELECT COUNT(*) FROM invoices
+            WHERE status IN ('UNPAID','PARTIAL','OVERDUE')""").fetchone()[0]
+        # Sum of unpaid invoice balances
+        unpaid_balance_row = con.execute("""SELECT COALESCE(SUM(total_amount - paid_amount), 0) FROM invoices
+            WHERE status IN ('UNPAID','PARTIAL','OVERDUE')""").fetchone()
+        unpaid_balance = float(unpaid_balance_row[0]) if unpaid_balance_row else 0.0
+        # Total counts
+        total_companies = con.execute("SELECT COUNT(*) FROM companies WHERE active=1").fetchone()[0]
+        total_persons = con.execute("SELECT COUNT(*) FROM persons WHERE active=1").fetchone()[0]
+        total_contracts = con.execute("SELECT COUNT(*) FROM contracts").fetchone()[0]
+        total_proformas = con.execute("SELECT COUNT(*) FROM proformas").fetchone()[0]
+        total_invoices = con.execute("SELECT COUNT(*) FROM invoices").fetchone()[0]
+        return {
+            "active_contracts": active_contracts,
+            "in_progress_proformas": in_progress_proformas,
+            "unpaid_invoices": unpaid_invoices,
+            "unpaid_balance": unpaid_balance,
+            "total_companies": total_companies,
+            "total_persons": total_persons,
+            "total_contracts": total_contracts,
+            "total_proformas": total_proformas,
+            "total_invoices": total_invoices,
+        }
+
+
+
 
 @app.get("/api/iso30414/report")
 def iso30414_report(request: Request):

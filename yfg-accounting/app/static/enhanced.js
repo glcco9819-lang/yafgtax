@@ -1058,18 +1058,41 @@
     {key:'persons', label:'اشخاص', icon:'👤'},
     {key:'companies', label:'شرکت‌ها', icon:'🏢'},
     {key:'portal', label:'پورتال مشتریان', icon:'🌐', soon:true},
-    {key:'contracts', label:'قراردادها', icon:'📜', soon:true},
-    {key:'proforma', label:'پیش فاکتور', icon:'🧾', soon:true},
-    {key:'invoices', label:'فاکتورها', icon:'💳', soon:true},
+    {key:'contracts', label:'قراردادها', icon:'📜'},
+    {key:'proforma', label:'پیش فاکتور', icon:'🧾'},
+    {key:'invoices', label:'فاکتورها', icon:'💳'},
   ];
 
   async function renderCustomers() {
     const section = document.getElementById('view-customers');
     if (!section) return;
     const isAdmin = state.me?.role === 'ADMIN' || state.me?.role === 'CEO';
+    // Try to fetch stats first (for dashboard cards)
+    let stats = null;
+    try { stats = await api('/customers/stats'); } catch(e) {/* silent */}
+    const statsHTML = stats ? `
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:20px;">
+        <div onclick="window.__goToTab('contracts')" style="cursor:pointer;background:#fff;border:1px solid #e2e8f0;border-right:3px solid #10b981;border-radius:10px;padding:14px 16px;transition:all .15s;" title="قراردادهای فعال">
+          <div style="font-size:11px;color:#10b981;font-weight:600;margin-bottom:6px;">📜 قراردادهای فعال</div>
+          <div style="font-size:24px;font-weight:700;color:#0f172a;">${num(stats.active_contracts)} <span style="font-size:13px;color:#94a3b8;font-weight:400;">از ${num(stats.total_contracts)}</span></div>
+          <div style="font-size:11px;color:#64748b;margin-top:4px;">قراردادهای جاری (امروز در بازه تاریخ)</div>
+        </div>
+        <div onclick="window.__goToTab('proforma')" style="cursor:pointer;background:#fff;border:1px solid #e2e8f0;border-right:3px solid #f59e0b;border-radius:10px;padding:14px 16px;transition:all .15s;" title="پیش فاکتورهای ناتمام">
+          <div style="font-size:11px;color:#f59e0b;font-weight:600;margin-bottom:6px;">🧾 پیش فاکتورهای ناتمام</div>
+          <div style="font-size:24px;font-weight:700;color:#0f172a;">${num(stats.in_progress_proformas)} <span style="font-size:13px;color:#94a3b8;font-weight:400;">از ${num(stats.total_proformas)}</span></div>
+          <div style="font-size:11px;color:#64748b;margin-top:4px;">پیش فاکتورهای در جریان</div>
+        </div>
+        <div onclick="window.__goToTab('invoices')" style="cursor:pointer;background:#fff;border:1px solid #e2e8f0;border-right:3px solid #ef4444;border-radius:10px;padding:14px 16px;transition:all .15s;" title="فاکتورهای پرداخت نشده">
+          <div style="font-size:11px;color:#ef4444;font-weight:600;margin-bottom:6px;">💳 فاکتورهای پرداخت نشده</div>
+          <div style="font-size:24px;font-weight:700;color:#0f172a;">${num(stats.unpaid_invoices)} <span style="font-size:13px;color:#94a3b8;font-weight:400;">از ${num(stats.total_invoices)}</span></div>
+          <div style="font-size:11px;color:#64748b;margin-top:4px;">مانده: ${num(Math.round(stats.unpaid_balance))} <span style="font-size:10px;color:#94a3b8;">ریال</span></div>
+        </div>
+      </div>
+    ` : '';
     section.innerHTML = `
       <h1>🤝 مشتریان</h1>
-      <p class="hint" style="margin-bottom:16px;">مدیریت اشخاص حقیقی، شرکت‌های مشتری و اسناد مرتبط — قراردادها، پیش‌فاکتور و فاکتور به‌زودی فعال می‌شوند.</p>
+      <p class="hint" style="margin-bottom:16px;">مدیریت اشخاص حقیقی، شرکت‌های مشتری و اسناد مرتبط — قراردادها، پیش‌فاکتور و فاکتور.</p>
+      ${statsHTML}
       <div class="tabs" style="margin-bottom:16px;flex-wrap:wrap;">
         ${CUSTOMER_TABS.map(t => `<button class="tab ${customersTab===t.key?'active':''}" data-ctab="${t.key}" ${t.soon?'disabled style="opacity:0.5;cursor:not-allowed;"':''}>${t.icon} ${t.label}${t.soon?' <small style="font-size:9px;color:#94a3b8;">به‌زودی</small>':''}</button>`).join('')}
       </div>
@@ -1079,11 +1102,15 @@
       customersTab = b.dataset.ctab;
       renderCustomers();
     }));
+    window.__goToTab = (key) => { customersTab = key; renderCustomers(); };
     const content = document.getElementById('customersContent');
     if (!content) return;
     try {
       if (customersTab === 'persons') await renderPersonsList(content, isAdmin);
       else if (customersTab === 'companies') await renderCompaniesListForCustomers(content, isAdmin);
+      else if (customersTab === 'contracts') await renderContractsList(content, isAdmin);
+      else if (customersTab === 'proforma') await renderProformasList(content, isAdmin);
+      else if (customersTab === 'invoices') await renderInvoicesList(content, isAdmin);
       else content.innerHTML = `<div class="empty-state" style="text-align:center;padding:40px 20px;color:#94a3b8;">
         <div style="font-size:48px;margin-bottom:12px;">🚧</div>
         <h3 style="margin:0 0 8px;">این بخش به‌زودی فعال خواهد شد</h3>
@@ -1272,19 +1299,30 @@
       try {
         const c = (await api('/companies')).find(x => x.id === id);
         if (!c) return toast('شرکت پیدا نشد', true);
+        let contacts = [];
+        try { contacts = await api(`/companies/${id}/contacts`); } catch(e) {}
         const item = (label, val) => `<div style="display:flex;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #f1f5f9;font-size:13px;"><span style="color:#64748b;">${label}</span><b>${esc(val) || '—'}</b></div>`;
+        const contactRows = (contacts||[]).map(co => `
+          <tr>
+            <td><span style="background:#f1f5f9;padding:2px 8px;border-radius:6px;font-size:11px;">${esc({PHONE:'تلفن',MOBILE:'همراه',EMAIL:'ایمیل',FAX:'فکس',WEBSITE:'وب‌سایت',OTHER:'سایر'}[co.contact_type] || co.contact_type)}</span></td>
+            <td><b>${esc(co.label || '—')}</b></td>
+            <td>${esc(co.value)}</td>
+            <td style="font-size:11px;color:#64748b;">${esc(co.notes || '')}</td>
+          </tr>`).join('');
         const body = `<div style="border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;">
           ${item('نوع', c.kind==='REAL' ? 'حقیقی' : 'حقوقی')}
           ${item('کد', c.code)}
           ${c.kind === 'LEGAL' ? item('نام شرکت', c.name) : item('نام', `${c.first_name} ${c.last_name}`)}
           ${item('شناسه ملی', c.national_id)}
-          ${item('تماس', c.phone)}
+          ${item('تماس اصلی', c.phone)}
           ${item('کد پستی', c.postal_code)}
           ${item('آدرس', c.address)}
           ${item('نام مدیر', c.manager_name)}
           ${item('تماس مدیر', c.manager_phone)}
-        </div>`;
-        modal(`جزئیات ${esc(c.name)}`, 'مشخصات کامل شرکت', body);
+          ${item('توضیحات', c.description)}
+        </div>
+        ${(contacts||[]).length ? `<h4 style="margin-top:14px;margin-bottom:8px;">📞 تماس‌های متعدد (${contacts.length})</h4><div class="table-card"><table class="data-table" style="font-size:12px;"><thead><tr><th>نوع</th><th>برچسب</th><th>مقدار</th><th>یادداشت</th></tr></thead><tbody>${contactRows}</tbody></table></div>` : '<p class="hint" style="margin-top:12px;">تماس اضافی ثبت نشده.</p>'}`;
+        modal(`جزئیات ${esc(c.name)}`, 'مشخصات کامل شرکت و تماس‌ها', body);
       } catch(e) { toast(e.message, true); }
     };
 
@@ -1293,9 +1331,22 @@
     window.__custCompanyForm = (id) => {
       (async () => {
         let c = null;
-        if (id) c = (await api('/companies')).find(x => x.id === id);
+        let contacts = [];
+        if (id) {
+          c = (await api('/companies')).find(x => x.id === id);
+          try { contacts = await api(`/companies/${id}/contacts`); } catch(e) {/* silent */}
+        }
         const kind = c?.kind || 'LEGAL';
         const field = (label, name, val, opts={}) => `<label>${label}${opts.required?' <span style="color:#ef4444;">*</span>':''}<input class="field" name="${name}" ${opts.required?'required':''} value="${esc(val ?? '')}" placeholder="${opts.placeholder||''}"></label>`;
+        const contactRows = (contacts||[]).map(co => `
+          <tr>
+            <td><span style="background:#f1f5f9;padding:2px 8px;border-radius:6px;font-size:11px;">${esc({PHONE:'تلفن',MOBILE:'همراه',EMAIL:'ایمیل',FAX:'فکس',WEBSITE:'وب‌سایت',OTHER:'سایر'}[co.contact_type] || co.contact_type)}</span></td>
+            <td><b>${esc(co.label || '—')}</b></td>
+            <td>${esc(co.value)}</td>
+            <td style="font-size:11px;color:#64748b;">${esc(co.notes || '')}</td>
+            <td><button type="button" class="btn small" style="background:#fee2e2;color:#991b1b;" onclick="window.__deleteContact('${co.id}','${id}')">✕</button></td>
+          </tr>
+        `).join('');
         const body = `
         <form id="custCompanyForm" style="display:grid;gap:12px;">
           <div style="display:flex;gap:8px;">
@@ -1316,7 +1367,7 @@
             ${field('شناسه ملی / کد ملی', 'national_id', c?.national_id, { placeholder: '۱۱ رقمی برای حقوقی / ۱۰ رقمی برای حقیقی' })}
           </div>
           <div class="form-grid">
-            ${field('تماس', 'phone', c?.phone, { placeholder: '021-12345678' })}
+            ${field('تماس اصلی', 'phone', c?.phone, { placeholder: '021-12345678' })}
             ${field('کد پستی', 'postal_code', c?.postal_code, { placeholder: '۱۰ رقمی' })}
           </div>
           ${field('آدرس', 'address', c?.address, { placeholder: 'آدرس کامل دفتر/شرکت' })}
@@ -1324,12 +1375,57 @@
             ${field('نام مدیر', 'manager_name', c?.manager_name)}
             ${field('تماس مدیر', 'manager_phone', c?.manager_phone)}
           </div>
+          <label>توضیحات <span style="color:#64748b;font-size:11px;">(داخلی)</span>
+            <textarea class="field" name="description" rows="2" placeholder="توضیحات درباره شرکت، حوزه فعالیت، نکات مهم...">${c?esc(c.description||''):''}</textarea>
+          </label>
+
+          ${id ? `
+            <div style="border-top:1px solid #e2e8f0;padding-top:12px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <strong>📞 تماس‌های متعدد (${(contacts||[]).length})</strong>
+                <button type="button" class="btn primary small" onclick="window.__addContact('${id}')">＋ افزودن تماس</button>
+              </div>
+              <div class="table-card" style="overflow-x:auto;">
+                <table class="data-table" style="font-size:12px;">
+                  <thead><tr><th>نوع</th><th>برچسب</th><th>مقدار</th><th>یادداشت</th><th></th></tr></thead>
+                  <tbody>
+                    ${contactRows || '<tr><td colspan="5" style="text-align:center;padding:14px;color:#94a3b8;">تماس اضافه‌ای ثبت نشده — دکمه «افزودن تماس» را بزنید.</td></tr>'}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ` : '<p class="hint" style="font-size:11px;color:#94a3b8;">برای افزودن تماس‌های متعدد، ابتدا شرکت را ایجاد کنید.</p>'}
+
           <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px;">
             <button type="button" class="btn soft" onclick="document.getElementById('modalRoot').innerHTML=''">انصراف</button>
             <button type="submit" class="btn primary">${id ? 'ذخیره تغییرات' : 'ثبت شرکت'}</button>
           </div>
         </form>`;
         modal(id ? '✎ ویرایش شرکت' : '＋ شرکت جدید', 'نوع شخص (حقیقی/حقوقی) فیلدهای نام را تعیین می‌کند. کد پس از ثبت قابل تغییر نیست.', body);
+
+        // Contact management handlers
+        if (id) {
+          window.__addContact = (companyId) => {
+            const t = prompt('نوع تماس:\n1. PHONE (تلفن)\n2. MOBILE (همراه)\n3. EMAIL (ایمیل)\n4. FAX (فکس)\n5. WEBSITE (وب‌سایت)\n6. OTHER (سایر)', '2');
+            if (!t) return;
+            const types = ['', 'PHONE', 'MOBILE', 'EMAIL', 'FAX', 'WEBSITE', 'OTHER'];
+            const ct = types[parseInt(t)] || 'PHONE';
+            const label = prompt('برچسب (اختیاری):', '');
+            const value = prompt('مقدار تماس:');
+            if (!value) return;
+            const notes = prompt('یادداشت (اختیاری):', '') || '';
+            api(`/companies/${companyId}/contacts`, {method:'POST', body: JSON.stringify({contact_type: ct, label: label || '', value, notes})})
+              .then(() => { toast('تماس اضافه شد'); window.__custCompanyForm(id); })
+              .catch(e => toast(e.message, true));
+          };
+          window.__deleteContact = (contactId, companyId) => {
+            if (!confirm('حذف این تماس؟')) return;
+            api(`/companies/${companyId}/contacts/${contactId}`, {method:'DELETE'})
+              .then(() => { toast('تماس حذف شد'); window.__custCompanyForm(id); })
+              .catch(e => toast(e.message, true));
+          };
+        }
+
         const form = document.getElementById('custCompanyForm');
         const syncKind = () => {
           const k = form.querySelector('[name=kind]:checked')?.value;
@@ -1337,7 +1433,6 @@
           const realRow = document.getElementById('custRealRow');
           legalRow.style.display = k === 'LEGAL' ? 'grid' : 'none';
           realRow.style.display = k === 'REAL' ? 'grid' : 'none';
-          // Toggle required-ness on the kind-specific name fields so HTML5 validation doesn't block submit when one row is hidden
           const legalName = legalRow.querySelector('[name=name]');
           const realFirst = realRow.querySelector('[name=first_name]');
           const realLast = realRow.querySelector('[name=last_name]');
@@ -1364,6 +1459,539 @@
         });
       })();
     };
+  }
+
+
+  // ============ CONTRACTS / PROFORMAS / INVOICES (نمونه اولیه کامل) ============
+  const CONTRACT_STATUS_LABELS = {
+    DRAFT: {label:'پیش‌نویس', color:'#94a3b8', bg:'#f1f5f9'},
+    ACTIVE: {label:'فعال', color:'#10b981', bg:'#d1fae5'},
+    COMPLETED: {label:'تکمیل‌شده', color:'#0b8f89', bg:'#f0fdfa'},
+    TERMINATED: {label:'فسخ‌شده', color:'#ef4444', bg:'#fee2e2'},
+  };
+  const PROFORMA_STATUS_LABELS = {
+    DRAFT: {label:'پیش‌نویس', color:'#94a3b8', bg:'#f1f5f9'},
+    IN_PROGRESS: {label:'در جریان', color:'#f59e0b', bg:'#fef3c7'},
+    SENT: {label:'ارسال‌شده', color:'#3b82f6', bg:'#dbeafe'},
+    ACCEPTED: {label:'تأییدشده', color:'#10b981', bg:'#d1fae5'},
+    REJECTED: {label:'ردشده', color:'#ef4444', bg:'#fee2e2'},
+    EXPIRED: {label:'منقضی', color:'#94a3b8', bg:'#f1f5f9'},
+  };
+  const INVOICE_STATUS_LABELS = {
+    DRAFT: {label:'پیش‌نویس', color:'#94a3b8', bg:'#f1f5f9'},
+    UNPAID: {label:'پرداخت‌نشده', color:'#ef4444', bg:'#fee2e2'},
+    PARTIAL: {label:'پرداخت جزئی', color:'#f59e0b', bg:'#fef3c7'},
+    PAID: {label:'تسویه‌شده', color:'#10b981', bg:'#d1fae5'},
+    OVERDUE: {label:'سررسید گذشته', color:'#dc2626', bg:'#fee2e2'},
+    CANCELLED: {label:'لغوشده', color:'#94a3b8', bg:'#f1f5f9'},
+  };
+  const CURRENCY_LABELS = {IRR:'ریال', USD:'دلار', EUR:'یورو'};
+  const CONTRACT_TYPES = [
+    {value:'general', label:'عمومی'},
+    {value:'accounting', label:'حسابداری'},
+    {value:'audit', label:'حسابرسی/ممیزی'},
+    {value:'consulting', label:'مشاوره'},
+    {value:'tax', label:'مالیات'},
+    {value:'payroll', label:'تنخواه‌گردان/حقوق'},
+  ];
+
+  function statusTag(map, key) {
+    const s = map[key] || {label:key, color:'#64748b', bg:'#f1f5f9'};
+    return `<span style="background:${s.bg};color:${s.color};padding:2px 10px;border-radius:999px;font-size:11px;font-weight:600;">${s.label}</span>`;
+  }
+  function moneyFmt(amount, currency='IRR') {
+    if (amount == null) return '—';
+    return num(Math.round(amount)) + ' ' + (CURRENCY_LABELS[currency] || currency);
+  }
+
+  // ---- CONTRACTS LIST ----
+  async function renderContractsList(content, isAdmin) {
+    if (!content) return;
+    try {
+      const [contracts, companies, persons] = await Promise.all([
+        api('/contracts'),
+        api('/companies').catch(()=>[]),
+        api('/persons').catch(()=>[]),
+      ]);
+      const canManage = isAdmin && (state.me?.permissions?.['customers.contracts'] ?? true);
+      const today = new Date().toISOString().slice(0, 10);
+      const rows = (contracts||[]).map(c => {
+        const activeNow = c.is_currently_active;
+        return `<tr>
+          <td><code><strong>${esc(c.code)}</strong></code>${activeNow ? ' <span style="color:#10b981;font-size:10px;" title="امروز در بازه">●</span>' : ''}</td>
+          <td><strong>${esc(c.title)}</strong>${c.subject ? `<div style="font-size:11px;color:#64748b;">${esc(c.subject)}</div>` : ''}</td>
+          <td>${esc(c.company_name || '—')}</td>
+          <td style="font-size:11px;">${c.start_date} تا ${c.end_date}<div style="color:${activeNow?'#10b981':'#94a3b8'};font-size:10px;">${activeNow ? '✓ جاری' : 'غیرفعال'}</div></td>
+          <td style="font-size:12px;">${moneyFmt(c.value_amount, c.currency)}</td>
+          <td>${statusTag(CONTRACT_STATUS_LABELS, c.status)}</td>
+          <td>
+            ${canManage ? `<button class="btn soft small" onclick="window.__contractForm('${c.id}')">✎ ویرایش</button>` : ''}
+            <button class="btn small" style="background:#e0f2fe;color:#0369a1;" onclick="window.__contractDetails('${c.id}')">👁 جزئیات</button>
+            ${canManage ? `<button class="btn small" style="background:#fee2e2;color:#991b1b;" onclick="window.__contractDelete('${c.id}','${esc(c.code)}')">حذف</button>` : ''}
+          </td>
+        </tr>`;
+      }).join('');
+      content.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+          <div><h3 style="margin:0;">📜 قراردادها (${(contracts||[]).length})</h3><p class="hint" style="margin-top:2px;">قراردادهای حقیقی/حقوقی — ستون «فعال» نشان می‌دهد امروز در بازه تاریخ است.</p></div>
+          ${canManage ? '<button class="btn primary small" onclick="window.__contractForm()">＋ قرارداد جدید</button>' : ''}
+        </div>
+        <div class="table-card" style="overflow-x:auto;">
+          <table class="data-table">
+            <thead><tr><th>کد</th><th>عنوان</th><th>شرکت</th><th>بازه</th><th>مبلغ</th><th>وضعیت</th><th>عملیات</th></tr></thead>
+            <tbody>
+              ${rows || '<tr><td colspan="7" style="text-align:center;padding:20px;color:#64748b;">قراردادی ثبت نشده — با دکمه «قرارداد جدید» شروع کنید.</td></tr>'}
+            </tbody>
+          </table>
+        </div>`;
+
+      window.__contractForm = (id) => openContractForm(id, companies, persons, () => renderCustomers());
+      window.__contractDetails = async (id) => {
+        try {
+          const c = (await api('/contracts')).find(x => x.id === id);
+          if (!c) return toast('قرارداد پیدا نشد', true);
+          const item = (label, val) => `<div style="display:flex;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #f1f5f9;font-size:13px;"><span style="color:#64748b;">${label}</span><b>${val || '—'}</b></div>`;
+          const body = `<div style="border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;">
+            ${item('کد', c.code)}${item('عنوان', c.title)}${item('شرکت', c.company_name)}
+            ${item('موضوع', c.subject)}${item('نوع قرارداد', (CONTRACT_TYPES.find(t=>t.value===c.contract_type)||{}).label || c.contract_type)}
+            ${item('بازه', `${c.start_date} تا ${c.end_date}`)}
+            ${item('مبلغ', moneyFmt(c.value_amount, c.currency))}
+            ${item('وضعیت', (CONTRACT_STATUS_LABELS[c.status]||{}).label || c.status)}
+            ${item('توضیحات', c.notes)}
+          </div>`;
+          modal(`📜 قرارداد ${esc(c.code)}`, 'جزئیات قرارداد', body);
+        } catch(e) { toast(e.message, true); }
+      };
+      window.__contractDelete = async (id, code) => {
+        if (!confirm(`حذف قرارداد «${code}»؟ اگر فاکتور/پیش‌فاکتور مرتبط باشد، فقط فسخ می‌شود.`)) return;
+        try {
+          const r = await api(`/contracts/${id}`, {method:'DELETE'});
+          toast(r.terminated ? 'قرارداد فسخ شد (اسناد موجود حفظ شدند)' : 'قرارداد حذف شد');
+          renderCustomers();
+        } catch(e) { toast(e.message, true); }
+      };
+    } catch(e) { content.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
+  }
+
+  function openContractForm(id, companies, persons, onDone) {
+    (async () => {
+      let c = null;
+      if (id) c = (await api('/contracts')).find(x => x.id === id);
+      const companyOpts = (companies||[]).map(co=>`<option value="${co.id}" ${c&&c.company_id===co.id?'selected':''}>${esc(co.name)}</option>`).join('');
+      const personOpts = (persons||[]).map(p=>`<option value="${p.id}" ${c&&c.person_id===p.id?'selected':''}>${esc(p.first_name)} ${esc(p.last_name)}</option>`).join('');
+      const body = `
+        <form id="contractForm" style="display:grid;gap:12px;">
+          <div class="form-grid">
+            <label>کد قرارداد <span style="color:#ef4444;">*</span>
+              <input class="field" name="code" required value="${c?esc(c.code):''}" ${c?'readonly':''} placeholder="C001">
+            </label>
+            <label>عنوان <span style="color:#ef4444;">*</span>
+              <input class="field" name="title" required value="${c?esc(c.title):''}" placeholder="قرارداد حسابداری سالانه">
+            </label>
+          </div>
+          <div class="form-grid">
+            <label>شرکت <span style="color:#ef4444;">*</span>
+              <select class="field" name="company_id" required>
+                <option value="">— انتخاب —</option>${companyOpts}
+              </select>
+            </label>
+            <label>شخص امضاکننده (اختیاری)
+              <select class="field" name="person_id">
+                <option value="">— انتخاب —</option>${personOpts}
+              </select>
+            </label>
+          </div>
+          <div class="form-grid">
+            <label>از تاریخ <span style="color:#ef4444;">*</span>
+              <input class="field" type="date" name="start_date" required value="${c?c.start_date:''}">
+            </label>
+            <label>تا تاریخ <span style="color:#ef4444;">*</span>
+              <input class="field" type="date" name="end_date" required value="${c?c.end_date:''}">
+            </label>
+          </div>
+          <div class="form-grid">
+            <label>مبلغ
+              <input class="field" type="number" name="value_amount" value="${c?c.value_amount:0}" min="0" step="1000">
+            </label>
+            <label>ارز
+              <select class="field" name="currency">
+                ${Object.entries(CURRENCY_LABELS).map(([k,v])=>`<option value="${k}" ${c&&c.currency===k?'selected':''}>${v}</option>`).join('')}
+              </select>
+            </label>
+            <label>نوع قرارداد
+              <select class="field" name="contract_type">
+                ${CONTRACT_TYPES.map(t=>`<option value="${t.value}" ${c&&c.contract_type===t.value?'selected':''}>${t.label}</option>`).join('')}
+              </select>
+            </label>
+            <label>وضعیت
+              <select class="field" name="status">
+                ${Object.entries(CONTRACT_STATUS_LABELS).map(([k,v])=>`<option value="${k}" ${c&&c.status===k?'selected':''}>${v.label}</option>`).join('')}
+              </select>
+            </label>
+          </div>
+          <label>موضوع
+            <input class="field" name="subject" value="${c?esc(c.subject||''):''}" placeholder="موضوع قرارداد">
+          </label>
+          <label>یادداشت
+            <textarea class="field" name="notes" rows="3" placeholder="توضیحات داخلی">${c?esc(c.notes||''):''}</textarea>
+          </label>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px;">
+            <button type="button" class="btn soft" onclick="document.getElementById('modalRoot').innerHTML=''">انصراف</button>
+            <button type="submit" class="btn primary">${id?'ذخیره':'ایجاد'}</button>
+          </div>
+        </form>`;
+      modal(id ? '✎ ویرایش قرارداد' : '＋ قرارداد جدید', 'کد پس از ثبت قابل ویرایش نیست.', body);
+      const form = document.getElementById('contractForm');
+      form.addEventListener('submit', async e => {
+        e.preventDefault();
+        const fd = new FormData(form);
+        const payload = {
+          code: fd.get('code').trim(),
+          title: fd.get('title').trim(),
+          company_id: fd.get('company_id'),
+          person_id: fd.get('person_id') || null,
+          start_date: fd.get('start_date'),
+          end_date: fd.get('end_date'),
+          value_amount: parseFloat(fd.get('value_amount') || 0),
+          currency: fd.get('currency'),
+          contract_type: fd.get('contract_type'),
+          status: fd.get('status'),
+          subject: fd.get('subject').trim(),
+          notes: fd.get('notes').trim(),
+        };
+        if (!payload.code || !payload.title || !payload.company_id) return toast('کد، عنوان و شرکت الزامی است', true);
+        try {
+          if (id) await api(`/contracts/${id}`, {method:'PATCH', body:JSON.stringify(payload)});
+          else await api('/contracts', {method:'POST', body:JSON.stringify(payload)});
+          document.getElementById('modalRoot').innerHTML = '';
+          toast(id ? 'قرارداد ویرایش شد' : 'قرارداد ایجاد شد');
+          onDone();
+        } catch(err) { toast(err.message, true); }
+      });
+    })();
+  }
+
+  // ---- PROFORMAS LIST ----
+  async function renderProformasList(content, isAdmin) {
+    if (!content) return;
+    try {
+      const [proformas, companies, contracts, persons] = await Promise.all([
+        api('/proformas'),
+        api('/companies').catch(()=>[]),
+        api('/contracts').catch(()=>[]),
+        api('/persons').catch(()=>[]),
+      ]);
+      const canManage = isAdmin && (state.me?.permissions?.['customers.proformas'] ?? true);
+      const rows = (proformas||[]).map(p => {
+        const itemsCount = (p.items||[]).length;
+        return `<tr>
+          <td><code><strong>${esc(p.code)}</strong></code></td>
+          <td><strong>${esc(p.title)}</strong>${itemsCount ? `<div style="font-size:11px;color:#64748b;">${itemsCount} قلم کالا/خدمت</div>` : ''}</td>
+          <td>${esc(p.company_name || '—')}</td>
+          <td style="font-size:11px;">${p.issue_date}${p.valid_until?` <span style="color:#94a3b8;">(تا ${p.valid_until})</span>`:''}</td>
+          <td style="font-size:12px;">${moneyFmt(p.total_amount, p.currency)}</td>
+          <td>${statusTag(PROFORMA_STATUS_LABELS, p.status)}</td>
+          <td>
+            ${canManage ? `<button class="btn soft small" onclick="window.__proformaForm('${p.id}')">✎ ویرایش</button>` : ''}
+            <button class="btn small" style="background:#e0f2fe;color:#0369a1;" onclick="window.__proformaDetails('${p.id}')">👁 جزئیات</button>
+            ${canManage ? `<button class="btn small" style="background:#fee2e2;color:#991b1b;" onclick="window.__proformaDelete('${p.id}','${esc(p.code)}')">حذف</button>` : ''}
+          </td>
+        </tr>`;
+      }).join('');
+      content.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+          <div><h3 style="margin:0;">🧾 پیش فاکتور (${(proformas||[]).length})</h3><p class="hint" style="margin-top:2px;">پیش‌فاکتورها با وضعیت «در جریان» در کارت آماری بالا شمرده می‌شوند.</p></div>
+          ${canManage ? '<button class="btn primary small" onclick="window.__proformaForm()">＋ پیش فاکتور جدید</button>' : ''}
+        </div>
+        <div class="table-card" style="overflow-x:auto;">
+          <table class="data-table">
+            <thead><tr><th>کد</th><th>عنوان</th><th>شرکت</th><th>تاریخ صدور</th><th>مبلغ کل</th><th>وضعیت</th><th>عملیات</th></tr></thead>
+            <tbody>
+              ${rows || '<tr><td colspan="7" style="text-align:center;padding:20px;color:#64748b;">پیش فاکتوری ثبت نشده — با دکمه «پیش فاکتور جدید» شروع کنید.</td></tr>'}
+            </tbody>
+          </table>
+        </div>`;
+
+      window.__proformaForm = (id) => openProformaForm(id, companies, contracts, persons, () => renderCustomers());
+      window.__proformaDetails = async (id) => {
+        try {
+          const p = (await api('/proformas')).find(x => x.id === id);
+          if (!p) return toast('پیش فاکتور پیدا نشد', true);
+          const item = (label, val) => `<div style="display:flex;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #f1f5f9;font-size:13px;"><span style="color:#64748b;">${label}</span><b>${val || '—'}</b></div>`;
+          const itemsTable = (p.items||[]).length ? `<table class="data-table" style="margin-top:12px;font-size:12px;"><thead><tr><th>شرح</th><th>تعداد</th><th>مبلغ واحد</th><th>مجموع</th></tr></thead><tbody>${(p.items||[]).map(i=>`<tr><td>${esc(i.description||'')}</td><td>${num(i.qty||0)}</td><td>${num(i.unit_price||0)}</td><td>${num((i.qty||0)*(i.unit_price||0))}</td></tr>`).join('')}</tbody></table>` : '<p class="hint">بدون اقلام</p>';
+          const body = `<div style="border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;">
+            ${item('کد', p.code)}${item('عنوان', p.title)}${item('شرکت', p.company_name)}
+            ${item('قرارداد مرتبط', p.contract_code || '—')}
+            ${item('تاریخ صدور', p.issue_date)}${item('تاریخ انقضا', p.valid_until)}
+            ${item('وضعیت', (PROFORMA_STATUS_LABELS[p.status]||{}).label || p.status)}
+            ${item('مبلغ کل', moneyFmt(p.total_amount, p.currency))}
+            ${item('یادداشت', p.notes)}
+          </div>${itemsTable}`;
+          modal(`🧾 پیش فاکتور ${esc(p.code)}`, 'جزئیات و اقلام', body);
+        } catch(e) { toast(e.message, true); }
+      };
+      window.__proformaDelete = async (id, code) => {
+        if (!confirm(`حذف پیش فاکتور «${code}»؟ اگر فاکتور مرتبط باشد، فقط رد می‌شود.`)) return;
+        try {
+          const r = await api(`/proformas/${id}`, {method:'DELETE'});
+          toast(r.rejected ? 'پیش فاکتور رد شد (فاکتورهای مرتبط حفظ شدند)' : 'پیش فاکتور حذف شد');
+          renderCustomers();
+        } catch(e) { toast(e.message, true); }
+      };
+    } catch(e) { content.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
+  }
+
+  function openProformaForm(id, companies, contracts, persons, onDone) {
+    (async () => {
+      let p = null;
+      if (id) p = (await api('/proformas')).find(x => x.id === id);
+      const companyOpts = (companies||[]).map(co=>`<option value="${co.id}" ${p&&p.company_id===co.id?'selected':''}>${esc(co.name)}</option>`).join('');
+      const contractOpts = (contracts||[]).map(c=>`<option value="${c.id}" ${p&&p.contract_id===c.id?'selected':''}>${esc(c.code)} — ${esc(c.title)}</option>`).join('');
+      const personOpts = (persons||[]).map(person=>`<option value="${person.id}" ${p&&p.person_id===person.id?'selected':''}>${esc(person.first_name)} ${esc(person.last_name)}</option>`).join('');
+      const itemsRows = (p?.items || [{}]).map((it, i) => proformaItemRow(it, i)).join('');
+      const body = `
+        <form id="proformaForm" style="display:grid;gap:12px;">
+          <div class="form-grid">
+            <label>کد <span style="color:#ef4444;">*</span><input class="field" name="code" required value="${p?esc(p.code):''}" ${p?'readonly':''} placeholder="P001"></label>
+            <label>عنوان <span style="color:#ef4444;">*</span><input class="field" name="title" required value="${p?esc(p.title):''}"></label>
+          </div>
+          <div class="form-grid">
+            <label>شرکت <span style="color:#ef4444;">*</span><select class="field" name="company_id" required><option value="">— انتخاب —</option>${companyOpts}</select></label>
+            <label>شخص (اختیاری)<select class="field" name="person_id"><option value="">— انتخاب —</option>${personOpts}</select></label>
+            <label>قرارداد مرتبط (اختیاری)<select class="field" name="contract_id"><option value="">— انتخاب —</option>${contractOpts}</select></label>
+          </div>
+          <div class="form-grid">
+            <label>تاریخ صدور <span style="color:#ef4444;">*</span><input class="field" type="date" name="issue_date" required value="${p?p.issue_date:''}"></label>
+            <label>تاریخ انقضا<input class="field" type="date" name="valid_until" value="${p?p.valid_until||'':''}"></label>
+            <label>وضعیت<select class="field" name="status">${Object.entries(PROFORMA_STATUS_LABELS).map(([k,v])=>`<option value="${k}" ${p?p.status===k:false?'selected':''}>${v.label}</option>`).join('')}</select></label>
+            <label>ارز<select class="field" name="currency">${Object.entries(CURRENCY_LABELS).map(([k,v])=>`<option value="${k}" ${p?p.currency===k:false?'selected':''}>${v}</option>`).join('')}</select></label>
+          </div>
+          <div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+              <strong>اقلام (${(p?.items||[]).length})</strong>
+              <button type="button" class="btn primary small" onclick="window.__addProformaItem()">＋ افزودن قلم</button>
+            </div>
+            <div id="proformaItems" style="display:grid;gap:6px;">${itemsRows}</div>
+          </div>
+          <label>یادداشت<textarea class="field" name="notes" rows="2" placeholder="توضیحات">${p?esc(p.notes||''):''}</textarea></label>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px;">
+            <button type="button" class="btn soft" onclick="document.getElementById('modalRoot').innerHTML=''">انصراف</button>
+            <button type="submit" class="btn primary">${id?'ذخیره':'ایجاد'}</button>
+          </div>
+        </form>`;
+      modal(id?'✎ ویرایش پیش فاکتور':'＋ پیش فاکتور جدید', 'مبلغ کل به‌صورت خودکار از مجموع اقلام محاسبه می‌شود.', body);
+
+      window.__addProformaItem = () => {
+        const idx = document.querySelectorAll('.proforma-item-row').length;
+        const row = document.createElement('div');
+        row.innerHTML = proformaItemRow({}, idx);
+        document.getElementById('proformaItems').appendChild(row.firstElementChild);
+      };
+      window.__removeProformaItem = (idx) => {
+        const row = document.querySelector(`.proforma-item-row[data-idx="${idx}"]`);
+        if (row) row.remove();
+      };
+
+      const form = document.getElementById('proformaForm');
+      form.addEventListener('submit', async e => {
+        e.preventDefault();
+        const fd = new FormData(form);
+        const items = [];
+        document.querySelectorAll('.proforma-item-row').forEach(row => {
+          const desc = row.querySelector('[name="item_desc"]').value.trim();
+          const qty = parseFloat(row.querySelector('[name="item_qty"]').value) || 0;
+          const unitPrice = parseFloat(row.querySelector('[name="item_unit"]').value) || 0;
+          if (desc && (qty > 0 || unitPrice > 0)) items.push({description: desc, qty, unit_price: unitPrice});
+        });
+        const payload = {
+          code: fd.get('code').trim(),
+          title: fd.get('title').trim(),
+          company_id: fd.get('company_id'),
+          person_id: fd.get('person_id') || null,
+          contract_id: fd.get('contract_id') || null,
+          issue_date: fd.get('issue_date'),
+          valid_until: fd.get('valid_until') || null,
+          status: fd.get('status'),
+          currency: fd.get('currency'),
+          items: items,
+          notes: fd.get('notes').trim(),
+        };
+        if (!payload.code || !payload.title || !payload.company_id) return toast('کد، عنوان و شرکت الزامی است', true);
+        try {
+          if (id) await api(`/proformas/${id}`, {method:'PATCH', body:JSON.stringify(payload)});
+          else await api('/proformas', {method:'POST', body:JSON.stringify(payload)});
+          document.getElementById('modalRoot').innerHTML = '';
+          toast(id ? 'پیش فاکتور ویرایش شد' : 'پیش فاکتور ایجاد شد');
+          onDone();
+        } catch(err) { toast(err.message, true); }
+      });
+    })();
+  }
+
+  function proformaItemRow(item, idx) {
+    return `<div class="proforma-item-row" data-idx="${idx}" style="display:grid;grid-template-columns:1fr 80px 120px 120px 32px;gap:6px;align-items:end;">
+      <input class="field" name="item_desc" placeholder="شرح کالا/خدمت" value="${esc(item.description||'')}">
+      <input class="field" type="number" name="item_qty" placeholder="تعداد" value="${item.qty||1}" min="0" step="0.01">
+      <input class="field" type="number" name="item_unit" placeholder="مبلغ واحد" value="${item.unit_price||0}" min="0" step="1000">
+      <button type="button" class="btn small" style="background:#fee2e2;color:#991b1b;height:36px;" onclick="window.__removeProformaItem(${idx})">✕</button>
+    </div>`;
+  }
+
+  // ---- INVOICES LIST ----
+  async function renderInvoicesList(content, isAdmin) {
+    if (!content) return;
+    try {
+      const [invoices, companies, contracts, proformas, persons] = await Promise.all([
+        api('/invoices'),
+        api('/companies').catch(()=>[]),
+        api('/contracts').catch(()=>[]),
+        api('/proformas').catch(()=>[]),
+        api('/persons').catch(()=>[]),
+      ]);
+      const canManage = isAdmin && (state.me?.permissions?.['customers.invoices'] ?? true);
+      const rows = (invoices||[]).map(inv => {
+        const balance = inv.balance != null ? inv.balance : (inv.total_amount - inv.paid_amount);
+        return `<tr>
+          <td><code><strong>${esc(inv.code)}</strong></code></td>
+          <td><strong>${esc(inv.title)}</strong></td>
+          <td>${esc(inv.company_name || '—')}</td>
+          <td style="font-size:11px;">${inv.issue_date}${inv.due_date?`<div style="color:#94a3b8;font-size:10px;">سررسید: ${inv.due_date}</div>`:''}</td>
+          <td style="font-size:12px;">${moneyFmt(inv.total_amount, inv.currency)}${inv.paid_amount > 0 ? `<div style="font-size:10px;color:#10b981;">پرداخت: ${num(inv.paid_amount)}</div>` : ''}</td>
+          <td style="font-size:12px;">${inv.status === 'PAID' ? '<span style="color:#10b981;">تسویه</span>' : `<span style="color:#ef4444;">${num(balance)}</span>`}</td>
+          <td>${statusTag(INVOICE_STATUS_LABELS, inv.status)}</td>
+          <td>
+            ${canManage ? `<button class="btn soft small" onclick="window.__invoiceForm('${inv.id}')">✎ ویرایش</button>` : ''}
+            <button class="btn small" style="background:#e0f2fe;color:#0369a1;" onclick="window.__invoiceDetails('${inv.id}')">👁 جزئیات</button>
+            ${canManage && inv.status !== 'PAID' ? `<button class="btn small" style="background:#d1fae5;color:#065f46;" onclick="window.__invoicePay('${inv.id}')">💰 ثبت پرداخت</button>` : ''}
+            ${canManage ? `<button class="btn small" style="background:#fee2e2;color:#991b1b;" onclick="window.__invoiceDelete('${inv.id}','${esc(inv.code)}')">حذف</button>` : ''}
+          </td>
+        </tr>`;
+      }).join('');
+      content.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+          <div><h3 style="margin:0;">💳 فاکتورها (${(invoices||[]).length})</h3><p class="hint" style="margin-top:2px;">فاکتورهای پرداخت‌نشده در کارت آماری بالا شمرده می‌شوند. ثبت پرداخت مانده را تسویه می‌کند.</p></div>
+          ${canManage ? '<button class="btn primary small" onclick="window.__invoiceForm()">＋ فاکتور جدید</button>' : ''}
+        </div>
+        <div class="table-card" style="overflow-x:auto;">
+          <table class="data-table">
+            <thead><tr><th>کد</th><th>عنوان</th><th>شرکت</th><th>تاریخ صدور/سررسید</th><th>مبلغ/پرداخت</th><th>مانده</th><th>وضعیت</th><th>عملیات</th></tr></thead>
+            <tbody>
+              ${rows || '<tr><td colspan="8" style="text-align:center;padding:20px;color:#64748b;">فاکتوری ثبت نشده — با دکمه «فاکتور جدید» شروع کنید.</td></tr>'}
+            </tbody>
+          </table>
+        </div>`;
+
+      window.__invoiceForm = (id) => openInvoiceForm(id, companies, contracts, proformas, persons, () => renderCustomers());
+      window.__invoiceDetails = async (id) => {
+        try {
+          const inv = (await api('/invoices')).find(x => x.id === id);
+          if (!inv) return toast('فاکتور پیدا نشد', true);
+          const item = (label, val) => `<div style="display:flex;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #f1f5f9;font-size:13px;"><span style="color:#64748b;">${label}</span><b>${val || '—'}</b></div>`;
+          const body = `<div style="border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;">
+            ${item('کد', inv.code)}${item('عنوان', inv.title)}${item('شرکت', inv.company_name)}
+            ${item('پیش فاکتور مرتبط', inv.proforma_code || '—')}${item('قرارداد مرتبط', inv.contract_code || '—')}
+            ${item('تاریخ صدور', inv.issue_date)}${item('سررسید', inv.due_date)}
+            ${item('مبلغ کل', moneyFmt(inv.total_amount, inv.currency))}
+            ${item('پرداخت‌شده', moneyFmt(inv.paid_amount, inv.currency))}
+            ${item('مانده', moneyFmt(inv.balance, inv.currency))}
+            ${item('وضعیت', (INVOICE_STATUS_LABELS[inv.status]||{}).label || inv.status)}
+            ${item('یادداشت', inv.notes)}
+          </div>`;
+          modal(`💳 فاکتور ${esc(inv.code)}`, 'جزئیات فاکتور', body);
+        } catch(e) { toast(e.message, true); }
+      };
+      window.__invoicePay = async (id) => {
+        const inv = (await api('/invoices')).find(x => x.id === id);
+        if (!inv) return;
+        const remaining = (inv.total_amount || 0) - (inv.paid_amount || 0);
+        const amt = prompt(`مبلغ پرداخت (مانده: ${num(remaining)} ${inv.currency})`, String(remaining));
+        if (!amt) return;
+        const paid = parseFloat(amt);
+        if (isNaN(paid) || paid <= 0) return toast('مبلغ نامعتبر', true);
+        try {
+          await api(`/invoices/${id}`, {method:'PATCH', body:JSON.stringify({paid_amount: (inv.paid_amount||0) + paid})});
+          toast(paid >= remaining ? 'فاکتور تسویه شد' : 'پرداخت جزئی ثبت شد');
+          renderCustomers();
+        } catch(e) { toast(e.message, true); }
+      };
+      window.__invoiceDelete = async (id, code) => {
+        if (!confirm(`حذف فاکتور «${code}»؟`)) return;
+        try {
+          await api(`/invoices/${id}`, {method:'DELETE'});
+          toast('فاکتور حذف شد');
+          renderCustomers();
+        } catch(e) { toast(e.message, true); }
+      };
+    } catch(e) { content.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
+  }
+
+  function openInvoiceForm(id, companies, contracts, proformas, persons, onDone) {
+    (async () => {
+      let inv = null;
+      if (id) inv = (await api('/invoices')).find(x => x.id === id);
+      const companyOpts = (companies||[]).map(co=>`<option value="${co.id}" ${inv&&inv.company_id===co.id?'selected':''}>${esc(co.name)}</option>`).join('');
+      const contractOpts = (contracts||[]).map(c=>`<option value="${c.id}" ${inv&&inv.contract_id===c.id?'selected':''}>${esc(c.code)} — ${esc(c.title)}</option>`).join('');
+      const proformaOpts = (proformas||[]).map(p=>`<option value="${p.id}" ${inv&&inv.proforma_id===p.id?'selected':''}>${esc(p.code)} — ${esc(p.title)}</option>`).join('');
+      const personOpts = (persons||[]).map(p=>`<option value="${p.id}" ${inv&&inv.person_id===p.id?'selected':''}>${esc(p.first_name)} ${esc(p.last_name)}</option>`).join('');
+      const body = `
+        <form id="invoiceForm" style="display:grid;gap:12px;">
+          <div class="form-grid">
+            <label>کد <span style="color:#ef4444;">*</span><input class="field" name="code" required value="${inv?esc(inv.code):''}" ${inv?'readonly':''} placeholder="I001"></label>
+            <label>عنوان <span style="color:#ef4444;">*</span><input class="field" name="title" required value="${inv?esc(inv.title):''}"></label>
+          </div>
+          <div class="form-grid">
+            <label>شرکت <span style="color:#ef4444;">*</span><select class="field" name="company_id" required><option value="">— انتخاب —</option>${companyOpts}</select></label>
+            <label>شخص (اختیاری)<select class="field" name="person_id"><option value="">— انتخاب —</option>${personOpts}</select></label>
+            <label>پیش فاکتور مرتبط (اختیاری)<select class="field" name="proforma_id"><option value="">— انتخاب —</option>${proformaOpts}</select></label>
+            <label>قرارداد مرتبط (اختیاری)<select class="field" name="contract_id"><option value="">— انتخاب —</option>${contractOpts}</select></label>
+          </div>
+          <div class="form-grid">
+            <label>تاریخ صدور <span style="color:#ef4444;">*</span><input class="field" type="date" name="issue_date" required value="${inv?inv.issue_date:''}"></label>
+            <label>سررسید<input class="field" type="date" name="due_date" value="${inv?inv.due_date||'':''}"></label>
+            <label>وضعیت<select class="field" name="status">${Object.entries(INVOICE_STATUS_LABELS).map(([k,v])=>`<option value="${k}" ${inv?inv.status===k:false?'selected':''}>${v.label}</option>`).join('')}</select></label>
+            <label>ارز<select class="field" name="currency">${Object.entries(CURRENCY_LABELS).map(([k,v])=>`<option value="${k}" ${inv?inv.currency===k:false?'selected':''}>${v}</option>`).join('')}</select></label>
+          </div>
+          <div class="form-grid">
+            <label>مبلغ کل<input class="field" type="number" name="total_amount" value="${inv?inv.total_amount:0}" min="0" step="1000"></label>
+            <label>پرداخت‌شده<input class="field" type="number" name="paid_amount" value="${inv?inv.paid_amount:0}" min="0" step="1000"></label>
+          </div>
+          <label>یادداشت<textarea class="field" name="notes" rows="2" placeholder="توضیحات">${inv?esc(inv.notes||''):''}</textarea></label>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px;">
+            <button type="button" class="btn soft" onclick="document.getElementById('modalRoot').innerHTML=''">انصراف</button>
+            <button type="submit" class="btn primary">${id?'ذخیره':'ایجاد'}</button>
+          </div>
+        </form>`;
+      modal(id?'✎ ویرایش فاکتور':'＋ فاکتور جدید', 'اگر paid_amount به total_amount برسد، وضعیت خودکار به «تسویه‌شده» تغییر می‌کند.', body);
+
+      const form = document.getElementById('invoiceForm');
+      form.addEventListener('submit', async e => {
+        e.preventDefault();
+        const fd = new FormData(form);
+        const payload = {
+          code: fd.get('code').trim(),
+          title: fd.get('title').trim(),
+          company_id: fd.get('company_id'),
+          person_id: fd.get('person_id') || null,
+          proforma_id: fd.get('proforma_id') || null,
+          contract_id: fd.get('contract_id') || null,
+          issue_date: fd.get('issue_date'),
+          due_date: fd.get('due_date') || null,
+          status: fd.get('status'),
+          total_amount: parseFloat(fd.get('total_amount') || 0),
+          paid_amount: parseFloat(fd.get('paid_amount') || 0),
+          currency: fd.get('currency'),
+          notes: fd.get('notes').trim(),
+        };
+        if (!payload.code || !payload.title || !payload.company_id) return toast('کد، عنوان و شرکت الزامی است', true);
+        try {
+          if (id) await api(`/invoices/${id}`, {method:'PATCH', body:JSON.stringify(payload)});
+          else await api('/invoices', {method:'POST', body:JSON.stringify(payload)});
+          document.getElementById('modalRoot').innerHTML = '';
+          toast(id ? 'فاکتور ویرایش شد' : 'فاکتور ایجاد شد');
+          onDone();
+        } catch(err) { toast(err.message, true); }
+      });
+    })();
   }
 
 

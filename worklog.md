@@ -317,3 +317,49 @@ Work Log:
 Stage Summary:
 - نسخه 0.3.0.04 با تغییرات کامل‌بخش (request types, chat monitor, ticks)
 - نکته نگهداری: scripts/sync_static.sh بعد از هر تغییر استاتیک
+
+---
+Task ID: customers-contracts-proformas-invoices-0305
+Agent: main
+Task: نمونه اولیه کامل قراردادها/پیش فاکتور/فاکتورها + تماس‌های متعدد شرکت + توضیحات + ۳ کارت آماری
+
+Work Log:
+- Backend main.py:
+  • ۳ جدول جدید: contracts (۱۷ ستون شامل code/title/company/person/start_date/end_date/value_amount/currency/status/contract_type/subject/notes/attachment/created_by/created/updated)، proformas (۱۶ ستون شامل items_json برای اقلام)، invoices (۱۸ ستون شامل paid_amount/balance)
+  • جدول جدید: company_contacts (تماس‌های متعدد: PHONE/MOBILE/EMAIL/FAX/WEBSITE/OTHER با برچسب/مقدار/یادداشت)
+  • ستون جدید companies.description
+  • ۴ endpoint CRUD برای contracts + /active (فقط قراردادهای جاری امروز)
+  • ۴ endpoint CRUD برای proformas + /in-progress + محاسبه خودکار total_amount از items
+  • ۴ endpoint CRUD برای invoices + /unpaid + ثبت پرداخت خودکار (اگر paid_amount >= total، status=PAID)
+  • ۳ endpoint برای company contacts (GET/POST/DELETE)
+  • GET /api/customers/stats: شمارش قراردادهای فعال (today در بازه)، پیش‌فاکتورهای ناتمام، فاکتورهای پرداخت‌نشده + sum مانده + totals
+  • ۳ مجوز جدید: customers.contracts/proformas/invoices (ADMIN/CEO)
+- Frontend enhanced.js:
+  • renderCustomers: ۳ کارت آماری بالا (قراردادهای فعال سبز، پیش‌فاکتورهای ناتمام نارنجی، فاکتورهای پرداخت‌نشده قرمز با مانده ریال) — کارت‌ها قابل کلیک به تب مربوطه
+  • حذف پرچم soon از contracts/proforma/invoices در CUSTOMER_TABS
+  • renderContractsList: جدول با کد/عنوان/شرکت/بازه/مبلغ/وضعیت + نقطه سبز برای قراردادهای جاری + فرم کامل + جزئیات + حذف (soft delete به TERMINATED اگر فاکتور مرتبط)
+  • renderProformasList: جدول + فرم با اقلام متعدد (description/qty/unit_price) + محاسبه خودکار total
+  • renderInvoicesList: جدول با ستون‌های مبلغ/پرداخت/مانده + دکمه «💰 ثبت پرداخت» برای سررسید + فرم کامل + پروفرما/قرارداد مرتبط
+  • openContractForm/openProformaForm/openInvoiceForm: مودال‌های کامل با همه فیلدها
+  • __custCompanyForm: افزودن فیلد «توضیحات» (textarea) + بخش «📞 تماس‌های متعدد» با افزودن/حذف هر تماس (نوع/برچسب/مقدار/یادداشت)
+  • __custCompanyDetails: نمایش توضیحات + جدول تماس‌های متعدد
+- رفع باگ Backend: ستون‌های INSERT برای contracts (۱۷→۱۷ placeholders)، company_contacts (۸→۸ placeholders)
+- نسخه 0.3.0.04 → 0.3.0.05، SW v17 → v18
+- مهاجرت DB: ALTER companies (+description)، CREATE contracts/proformas/invoices/company_contacts
+- اسکریپت جدید scripts/start_backend.sh برای restart امن بک‌اند با setsid/nohup
+- بازسازی scripts/sync_static.sh (حذف شده بود)
+- تست E2E:
+  ✓ ۳ کارت آماری بالا نمایش داده می‌شوند
+  ✓ ساخت قرارداد C001 (دروازه ACTIVE) → کارت «قراردادهای فعال: ۱ از ۱» ✓
+  ✓ ساخت پیش‌فاکتور P001 با ۲ قلم (محاسبه خودکار total=۳۰M ریال) → کارت «ناتمام: ۱ از ۱» ✓
+  ✓ ساخت فاکتور I001 (UNPAID، ۳۰M) → کارت «پرداخت‌نشده: ۱ از ۱، مانده ۳۰M» ✓
+  ✓ ثبت پرداخت ۳۰M → فاکتور تسویه → کارت «پرداخت‌نشده: ۰ از ۱، مانده ۰» ✓
+  ✓ افزودن تماس متعدد به شرکت (همراه/همراه مدیرعامل/0912/تماس اضطراری) ✓
+  ✓ افزودن توضیحات شرکت (متن طولانی) و نمایش در جزئیات ✓
+- داده‌های تست پاک شدند
+
+Stage Summary:
+- نسخه 0.3.0.05 با نمونه اولیه کامل قراردادها/پیش‌فاکتور/فاکتور
+- ۳ کارت آماری: قراردادهای فعال (جاری امروز)، پیش‌فاکتورهای ناتمام، فاکتورهای پرداخت‌نشده با مانده
+- شرکت‌ها: توضیحات + تماس‌های متعدد (با ۶ نوع: PHONE/MOBILE/EMAIL/FAX/WEBSITE/OTHER)
+- نکته نگهداری: scripts/start_backend.sh برای restart امن بک‌اند

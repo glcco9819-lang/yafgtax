@@ -1,5 +1,5 @@
-// YFG Service Worker v17 — version 0.3.0.04 — request types + chat read receipts + admin monitor
-const CACHE='yfg-desk-v17';
+// YFG Service Worker v18 — version 0.3.0.05 — contracts/proformas/invoices + company contacts + stats cards
+const CACHE='yfg-desk-v18';
 const ASSETS=['/','/static/style.css','/static/themes.css','/static/app.js','/static/performance.js','/static/enhanced.js','/static/themes.js','/static/icon.svg','/static/icon-192.png','/static/icon-512.png','/manifest.webmanifest'];
 
 self.addEventListener('install', e => e.waitUntil(
