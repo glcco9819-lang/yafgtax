@@ -1354,7 +1354,13 @@ async def session_cookie_middleware(request: Request, call_next):
         origin = request.headers.get("origin")
         if origin:
             host = request.headers.get("host", "")
-            if origin not in (f"http://{host}", f"https://{host}"):
+            # Allow requests from same origin OR from localhost variants (for proxy setups)
+            allowed_origins = {
+                f"http://{host}", f"https://{host}",
+                "http://localhost:3000", "http://127.0.0.1:3000",
+                "http://localhost:8000", "http://127.0.0.1:8000",
+            }
+            if origin not in allowed_origins:
                 return HTMLResponse("درخواست مبدأ نامعتبر است", status_code=403)
     response = await call_next(request)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
