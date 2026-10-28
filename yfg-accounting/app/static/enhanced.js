@@ -2138,10 +2138,11 @@
         {key:'process_types', label:'انواع فرآیند', icon:'🔄'},
         {key:'role_types', label:'انواع نقش', icon:'👥'},
         {key:'performance_types', label:'انواع عملکرد', icon:'✎'},
+        {key:'system_update', label:'به‌روزرسانی سامانه', icon:'🔄'},
       ];
       section.innerHTML = `
         <h1>تنظیمات</h1>
-        <p class="hint" style="margin-bottom:16px;">تعریف شرکت (حقیقی/حقوقی)، مدیریت کاربران و شرکت‌های واگذارشده، نقش‌ها و دسترسی‌های ریزفیلد، شاخص‌ها، انواع درخواست و انواع</p>
+        <p class="hint" style="margin-bottom:16px;">تعریف شرکت (حقیقی/حقوقی)، مدیریت کاربران و شرکت‌های واگذارشده، نقش‌ها و دسترسی‌های ریزفیلد، شاخص‌ها، انواع درخواست، انواع و به‌روزرسانی سامانه</p>
         <div class="tabs" style="margin-bottom:16px;flex-wrap:wrap;">
           ${tabs.map(t => `<button class="tab ${settingsTab===t.key?'active':''}" onclick="window.__setSettingsTab('${t.key}')">${t.icon} ${t.label}</button>`).join('')}
         </div>
@@ -2158,6 +2159,8 @@
         await renderRequestTypesTab(document.getElementById('settingsContent'));
       } else if (settingsTab === 'kpis') {
         renderKPITab(data);
+      } else if (settingsTab === 'system_update') {
+        await renderSystemUpdateTab(document.getElementById('settingsContent'));
       } else {
         renderSettingsTab(data, tabs);
       }
@@ -2176,6 +2179,189 @@
     {value:'user_link', label:'لینک به کاربر', icon:'👤'},
     {value:'duration', label:'مدت (محاسبه خودکار)', icon:'⌛'},
   ];
+
+  // ============ SYSTEM UPDATE TAB (Settings → به‌روزرسانی سامانه) ============
+  async function renderSystemUpdateTab(container) {
+    if (!container) return;
+    try {
+      // Fetch current version + check for updates
+      let versionInfo = null;
+      try { versionInfo = await api('/system/version'); } catch(e) {}
+      const currentVer = versionInfo?.current || 'نامشخص';
+      const latestVer = versionInfo?.latest || 'نامشخص';
+      const upToDate = versionInfo?.up_to_date;
+
+      // Fetch backups
+      let backups = [];
+      try { backups = await api('/system/backups'); } catch(e) {}
+
+      const backupRows = (backups||[]).map(b => `
+        <tr>
+          <td style="font-size:12px;"><code>${esc(b.filename)}</code></td>
+          <td style="font-size:12px;">${num(b.size_kb || Math.round(b.size_bytes/1024))} KB</td>
+          <td style="font-size:12px;">${timeFmt(b.created_at)}</td>
+          <td style="display:flex;gap:4px;">
+            <button class="btn soft small" onclick="window.__restoreBackup('${esc(b.filename)}')">↩ بازیابی</button>
+            <button class="btn small" style="background:#fee2e2;color:#991b1b;" onclick="window.__deleteBackup('${esc(b.filename)}')">✗ حذف</button>
+          </td>
+        </tr>`).join('');
+
+      container.innerHTML = `
+        <div style="display:grid;gap:20px;">
+          <!-- Version Info -->
+          <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;">
+            <h3 style="margin:0 0 16px;">🔄 به‌روزرسانی سامانه</h3>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px;">
+              <div style="background:#f0fdfa;padding:14px;border-radius:10px;text-align:center;">
+                <div style="font-size:11px;color:#64748b;margin-bottom:4px;">نسخه فعلی</div>
+                <div style="font-size:20px;font-weight:700;color:#0b8f89;">${esc(currentVer)}</div>
+              </div>
+              <div style="background:#fef3c7;padding:14px;border-radius:10px;text-align:center;">
+                <div style="font-size:11px;color:#64748b;margin-bottom:4px;">آخرین نسخه</div>
+                <div style="font-size:20px;font-weight:700;color:#92400e;">${esc(latestVer)}</div>
+              </div>
+              <div style="background:${upToDate ? '#d1fae5' : (upToDate === false ? '#fee2e2' : '#f1f5f9')};padding:14px;border-radius:10px;text-align:center;">
+                <div style="font-size:11px;color:#64748b;margin-bottom:4px;">وضعیت</div>
+                <div style="font-size:20px;font-weight:700;color:${upToDate ? '#065f46' : (upToDate === false ? '#991b1b' : '#64748b')};">
+                  ${upToDate ? '✓ به‌روز' : (upToDate === false ? '⚠ آپدیت موجود' : '— نامشخص')}
+                </div>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn primary" onclick="window.__checkUpdate()">🔍 بررسی به‌روزرسانی</button>
+              <button class="btn soft" onclick="window.__doUpdate()" ${upToDate === false ? '' : 'disabled style="opacity:0.5;"'}>
+                ⬇ دانلود و نصب از GitHub
+              </button>
+              <label class="btn soft" style="cursor:pointer;">
+                📁 آپلود فایل ZIP
+                <input type="file" accept=".zip" style="display:none;" onchange="window.__uploadUpdate(this)">
+              </label>
+              <button class="btn soft" onclick="window.__doBackup()">💾 پشتیبان‌گیری</button>
+              <button class="btn small" style="background:#fee2e2;color:#991b1b;" onclick="window.__doRestart()">🔁 ری‌استارت سرور</button>
+            </div>
+            <div id="updateStatus" style="margin-top:12px;"></div>
+          </div>
+
+          <!-- Backups -->
+          <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;">
+            <h3 style="margin:0 0 12px;">💾 پشتیبان‌ها (${(backups||[]).length})</h3>
+            <div class="table-card" style="overflow-x:auto;">
+              <table class="data-table">
+                <thead><tr><th>فایل</th><th>حجم</th><th>تاریخ</th><th>عملیات</th></tr></thead>
+                <tbody>
+                  ${backupRows || '<tr><td colspan="4" style="text-align:center;padding:16px;color:#64748b;">پشتیبانی وجود ندارد</td></tr>'}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Info -->
+          <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:16px;font-size:12px;color:#64748b;">
+            <b>نکات:</b>
+            <ul style="margin:8px 0 0 20px;padding:0;line-height:1.8;">
+              <li>قبل از هر به‌روزرسانی، به‌طور خودکار از دیتابیس پشتیبان گرفته می‌شود.</li>
+              <li>پس از نصب آپدیت، سرور باید ری‌استارت شود (دکمه «ری‌استارت سرور»).</li>
+              <li>به‌روزرسانی از GitHub: دانلود از <code>github.com/glcco9819-lang/yafgtax</code> شاخه main.</li>
+              <li>آپلود فایل ZIP: فایل ZIP دانلود‌شده از مخزن GitHub را انتخاب کنید.</li>
+              <li>داده‌های دیتابیس (yfg.sqlite3) هرگز بازنویسی نمی‌شوند — فقط فایل‌های کد آپدیت می‌شوند.</li>
+              <li>در صورت بروز مشکل، می‌توانید با دکمه «بازیابی» یک پشتیبان قبلی را برگردانید.</li>
+            </ul>
+          </div>
+        </div>`;
+
+      window.__checkUpdate = async () => {
+        document.getElementById('updateStatus').innerHTML = '<p style="color:#64748b;">در حال بررسی...</p>';
+        try {
+          const v = await api('/system/version');
+          document.getElementById('updateStatus').innerHTML = `<p style="color:${v.up_to_date ? '#065f46' : '#991b1b'};">${v.up_to_date ? '✓ سامانه به‌روز است' : `⚠ نسخه جدید موجود: ${v.latest}`}</p>`;
+          renderSettings();
+        } catch(e) { toast(e.message, true); }
+      };
+
+      window.__doUpdate = async () => {
+        if (!confirm('به‌روزرسانی از GitHub؟ ابتدا از دیتابیس پشتیبان گرفته می‌شود.')) return;
+        document.getElementById('updateStatus').innerHTML = '<p style="color:#64748b;">⏳ در حال دانلود و نصب...</p>';
+        try {
+          const r = await api('/system/update?source=github&branch=main', {method:'POST'});
+          if (r.ok) {
+            document.getElementById('updateStatus').innerHTML = `<div style="background:#d1fae5;color:#065f46;padding:12px;border-radius:8px;">
+              <b>✓ به‌روزرسانی موفق!</b><br>
+              نسخه: ${r.previous_version} → ${r.new_version}<br>
+              فایل‌های آپدیت‌شده: ${r.updated_files.length}<br>
+              پشتیبان: ${r.backup_file}<br>
+              <b>⚠ سرور باید ری‌استارت شود.</b> دکمه «ری‌استارت سرور» را بزنید.
+            </div>`;
+            toast(r.message);
+          } else {
+            document.getElementById('updateStatus').innerHTML = `<div style="background:#fee2e2;color:#991b1b;padding:12px;border-radius:8px;">✗ ${r.error}</div>`;
+            toast(r.error, true);
+          }
+        } catch(e) {
+          document.getElementById('updateStatus').innerHTML = `<div style="background:#fee2e2;color:#991b1b;padding:12px;border-radius:8px;">✗ ${e.message}</div>`;
+          toast(e.message, true);
+        }
+      };
+
+      window.__uploadUpdate = async (input) => {
+        if (!input.files || !input.files[0]) return;
+        if (!confirm('آپلود و نصب فایل آپدیت؟ ابتدا از دیتابیس پشتیبان گرفته می‌شود.')) { input.value=''; return; }
+        document.getElementById('updateStatus').innerHTML = '<p style="color:#64748b;">⏳ در حال آپلود و نصب...</p>';
+        const fd = new FormData();
+        fd.append('file', input.files[0]);
+        try {
+          const r = await api('/system/update/upload', {method:'POST', body: fd});
+          if (r.ok) {
+            document.getElementById('updateStatus').innerHTML = `<div style="background:#d1fae5;color:#065f46;padding:12px;border-radius:8px;">
+              <b>✓ آپدیت موفق!</b><br>
+              نسخه: ${r.previous_version} → ${r.new_version}<br>
+              فایل‌های آپدیت‌شده: ${r.updated_files.length}<br>
+              <b>⚠ سرور باید ری‌استارت شود.</b>
+            </div>`;
+            toast(r.message);
+          } else {
+            document.getElementById('updateStatus').innerHTML = `<div style="background:#fee2e2;color:#991b1b;padding:12px;border-radius:8px;">✗ ${r.error}</div>`;
+          }
+        } catch(e) { toast(e.message, true); }
+        input.value = '';
+      };
+
+      window.__doBackup = async () => {
+        try {
+          const label = prompt('برچسب پشتیبان (اختیاری):', '');
+          const r = await api(`/system/backup${label ? `?label=${encodeURIComponent(label)}` : ''}`, {method:'POST'});
+          toast(`پشتیبان ساخته شد: ${r.filename}`);
+          renderSettings();
+        } catch(e) { toast(e.message, true); }
+      };
+
+      window.__restoreBackup = async (filename) => {
+        if (!confirm(`بازیابی پشتیبان «${filename}»؟ دیتابیس فعلی با پشتیبان جایگزین می‌شود (از دیتابیس فعلی هم پشتیبان خودکار گرفته می‌شود).`)) return;
+        try {
+          const r = await api(`/system/restore?filename=${encodeURIComponent(filename)}`, {method:'POST'});
+          toast(`بازیابی شد از ${filename}. پشتیبان قبلی: ${r.auto_backup}`);
+          renderSettings();
+        } catch(e) { toast(e.message, true); }
+      };
+
+      window.__deleteBackup = async (filename) => {
+        if (!confirm(`حذف پشتیبان «${filename}»؟`)) return;
+        try {
+          await api(`/system/backups/${encodeURIComponent(filename)}`, {method:'DELETE'});
+          toast('پشتیبان حذف شد');
+          renderSettings();
+        } catch(e) { toast(e.message, true); }
+      };
+
+      window.__doRestart = async () => {
+        if (!confirm('ری‌استارت سرور؟ صفحه ۵ ثانیه غیرفعال خواهد بود.')) return;
+        try {
+          const r = await api('/system/restart', {method:'POST'});
+          toast(r.message);
+          setTimeout(() => location.reload(), 5000);
+        } catch(e) { toast(e.message, true); }
+      };
+    } catch(e) { container.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
+  }
 
   async function renderRequestTypesTab(container) {
     if (!container) return;

@@ -1325,7 +1325,7 @@ def service_worker():
 @app.get("/api/status")
 def status():
     with db() as con:
-        return {"setup_needed": con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0, "product": "YFG Accounting Desk", "version": "0.3.0.05"}
+        return {"setup_needed": con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0, "product": "YFG Accounting Desk", "version": "0.3.0.06"}
 
 
 @app.post("/api/setup")
@@ -5035,3 +5035,340 @@ def perf_timer_stop(entry_id: str, request: Request):
         con.execute("UPDATE time_entries SET end_at=?, duration_seconds=? WHERE id=?", (end, duration, entry["id"]))
         con.execute("INSERT INTO performance_events VALUES(?,?,?,?,?,?)", (uid(), entry_id, user["id"], "TIMER_STOP", json.dumps({"duration": duration}), now()))
         return {"duration_seconds": duration, "minutes": round(duration/60)}
+
+
+# ========================================================================
+# SYSTEM UPDATE / BACKUP / RESTORE API
+# ========================================================================
+import shutil
+import tempfile
+import urllib.request
+import subprocess
+
+SYSTEM_VERSION = "0.3.0.06"
+SYSTEM_REPO_URL = "https://github.com/glcco9819-lang/yafgtax.git"
+SYSTEM_UPDATE_DIR = ROOT / "updates"  # temporary download location
+SYSTEM_BACKUP_DIR = DATA / "backups"
+
+class UpdateRequestModel(BaseModel):
+    source: str = "github"  # "github" or "upload"
+    branch: str = "main"
+
+@app.get("/api/system/version")
+def system_version(request: Request):
+    """Returns current system version and latest available from GitHub."""
+    user = current_user(request)
+    require_perm(user, "settings.view")
+    latest = None
+    try:
+        # Try to get latest commit info from GitHub API
+        api_url = f"https://api.github.com/repos/glcco9819-lang/yafgtax/commits/{SYSTEM_REPO_URL.split('/').pop().replace('.git','').split('/')[-1] if '/yafgtax' in SYSTEM_REPO_URL else 'main'}"
+        # Simpler: just try to fetch our own status endpoint from GitHub raw
+        import urllib.request
+        req = urllib.request.Request(f"https://raw.githubusercontent.com/glcco9819-lang/yafgtax/main/yfg-accounting/app/main.py", headers={"User-Agent": "YFG-Update-Check"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            content = resp.read().decode("utf-8", errors="replace")
+            # Find SYSTEM_VERSION in remote
+            import re as _re
+            m = _re.search(r'SYSTEM_VERSION\s*=\s*"([^"]+)"', content)
+            if m:
+                latest = m.group(1)
+    except Exception:
+        latest = None
+    return {
+        "current": SYSTEM_VERSION,
+        "latest": latest,
+        "up_to_date": (latest == SYSTEM_VERSION) if latest else None,
+        "repo_url": SYSTEM_REPO_URL,
+    }
+
+@app.get("/api/system/backups")
+def list_backups(request: Request):
+    """Lists available database backups."""
+    user = current_user(request)
+    require_perm(user, "settings.view")
+    backups = []
+    SYSTEM_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    for f in sorted(SYSTEM_BACKUP_DIR.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+        if f.is_file() and f.name.endswith(".sqlite3.bak"):
+            stat = f.stat()
+            backups.append({
+                "filename": f.name,
+                "size_bytes": stat.st_size,
+                "size_mb": round(stat.st_size / (1024*1024), 2),
+                "created_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            })
+    return backups
+
+@app.post("/api/system/backup")
+def create_backup(request: Request, label: str = ""):
+    """Creates a backup of the SQLite database."""
+    user = current_user(request)
+    require_perm(user, "settings.view")
+    SYSTEM_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    ts = now().replace(":", "-").replace(".", "_")
+    safe_label = re.sub(r"[^A-Za-z0-9_-]", "", label)[:30] if label else ""
+    backup_name = f"backup_{ts}{'_' + safe_label if safe_label else ''}.sqlite3.bak"
+    backup_path = SYSTEM_BACKUP_DIR / backup_name
+    shutil.copy2(str(DB_PATH), str(backup_path))
+    with sqlite3.connect(DB_PATH) as con: con.execute("INSERT INTO audit_events VALUES(?,?,?,?,?,?,?)", (uid(), user["id"], "SYSTEM_BACKUP", "system", None, json.dumps({"file": backup_name}), now())); con.commit()
+    return {"filename": backup_name, "size_bytes": backup_path.stat().st_size}
+
+@app.post("/api/system/restore")
+def restore_backup(request: Request, filename: str = ""):
+    """Restores a backup of the SQLite database."""
+    user = current_user(request)
+    require_perm(user, "settings.view")
+    if not filename:
+        raise HTTPException(400, "نام فایل پشتیبان الزامی است")
+    backup_path = SYSTEM_BACKUP_DIR / filename
+    if not backup_path.exists():
+        raise HTTPException(404, "فایل پشتیبان پیدا نشد")
+    # First, backup current DB
+    current_backup = SYSTEM_BACKUP_DIR / f"pre_restore_{now().replace(':','-').replace('.','_')}.sqlite3.bak"
+    shutil.copy2(str(DB_PATH), str(current_backup))
+    # Restore
+    shutil.copy2(str(backup_path), str(DB_PATH))
+    return {"ok": True, "restored_from": filename, "auto_backup": current_backup.name}
+
+@app.delete("/api/system/backups/{filename}")
+def delete_backup(filename: str, request: Request):
+    """Deletes a backup file."""
+    user = current_user(request)
+    require_perm(user, "settings.view")
+    backup_path = SYSTEM_BACKUP_DIR / filename
+    if not backup_path.exists():
+        raise HTTPException(404, "فایل پشتیبان پیدا نشد")
+    backup_path.unlink()
+    return {"ok": True}
+
+@app.post("/api/system/update")
+def system_update(request: Request, source: str = "github", branch: str = "main"):
+    """Downloads and applies an update from GitHub (or a manual upload).
+    
+    Steps:
+    1. Back up current database
+    2. Download ZIP from GitHub (main branch)
+    3. Extract to a temp dir
+    4. Copy new files to the app directory (preserving data/)
+    5. Return summary — the user must restart the server after this.
+    """
+    user = current_user(request)
+    require_perm(user, "settings.view")
+    
+    # Step 1: Auto-backup database
+    SYSTEM_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    auto_backup_name = f"pre_update_{now().replace(':','-').replace('.','_')}.sqlite3.bak"
+    auto_backup_path = SYSTEM_BACKUP_DIR / auto_backup_name
+    shutil.copy2(str(DB_PATH), str(auto_backup_path))
+    
+    # Step 2: Download
+    SYSTEM_UPDATE_DIR.mkdir(parents=True, exist_ok=True)
+    if source == "github":
+        zip_url = f"https://github.com/glcco9819-lang/yafgtax/archive/refs/heads/{branch}.zip"
+        try:
+            req = urllib.request.Request(zip_url, headers={"User-Agent": "YFG-Update"})
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                zip_data = resp.read()
+        except Exception as e:
+            return {"ok": False, "error": f"دانلود ناموفق: {e}"}
+    else:
+        return {"ok": False, "error": "منبع نامعتبر (فقط 'github' پشتیبانی می‌شود)"}
+    
+    # Step 3: Extract
+    temp_dir = Path(tempfile.mkdtemp(prefix="yfg_update_"))
+    zip_path = temp_dir / "update.zip"
+    zip_path.write_bytes(zip_data)
+    
+    try:
+        with zipfile.ZipFile(str(zip_path), "r") as zf:
+            zf.extractall(str(temp_dir / "extracted"))
+    except Exception as e:
+        shutil.rmtree(str(temp_dir), ignore_errors=True)
+        return {"ok": False, "error": f"استخراج ZIP ناموفق: {e}"}
+    
+    # Step 4: Find the extracted folder (github repo zip has a top-level folder like "yafgtax-main/")
+    extracted_items = list((temp_dir / "extracted").iterdir())
+    if not extracted_items:
+        shutil.rmtree(str(temp_dir), ignore_errors=True)
+        return {"ok": False, "error": "ZIP خالی است"}
+    repo_dir = extracted_items[0]  # first subfolder
+    
+    # Step 5: Copy new files
+    updated_files = []
+    
+    # Copy main.py
+    src_main = repo_dir / "yfg-accounting" / "app" / "main.py"
+    dst_main = ROOT / "app" / "main.py"
+    if src_main.exists():
+        shutil.copy2(str(src_main), str(dst_main))
+        updated_files.append("app/main.py")
+    
+    # Copy static files
+    src_static = repo_dir / "yfg-accounting" / "app" / "static"
+    dst_static = ROOT / "app" / "static"
+    if src_static.exists():
+        for f in src_static.iterdir():
+            if f.is_file():
+                shutil.copy2(str(f), str(dst_static / f.name))
+                updated_files.append(f"app/static/{f.name}")
+    
+    # Copy next.config.ts
+    src_nextconfig = repo_dir / "next.config.ts"
+    dst_nextconfig = ROOT.parent / "next.config.ts" if (ROOT.parent / "next.config.ts").exists() else None
+    if src_nextconfig.exists() and dst_nextconfig:
+        shutil.copy2(str(src_nextconfig), str(dst_nextconfig))
+        updated_files.append("next.config.ts")
+    
+    # Copy src/ (Next.js)
+    src_nextjs = repo_dir / "src"
+    dst_nextjs = ROOT.parent / "src" if (ROOT.parent / "src").exists() else None
+    if src_nextjs.exists() and dst_nextjs:
+        for f in src_nextjs.rglob("*"):
+            if f.is_file():
+                rel = f.relative_to(src_nextjs)
+                dst_f = dst_nextjs / rel
+                dst_f.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(str(f), str(dst_f))
+                updated_files.append(f"src/{rel}")
+    
+    # Copy public/static
+    src_public = repo_dir / "public" / "static"
+    dst_public = ROOT.parent / "public" / "static" if (ROOT.parent / "public" / "static").exists() else None
+    if src_public.exists() and dst_public:
+        for f in src_public.iterdir():
+            if f.is_file():
+                shutil.copy2(str(f), str(dst_public / f.name))
+                updated_files.append(f"public/static/{f.name}")
+    
+    # Clean up temp
+    shutil.rmtree(str(temp_dir), ignore_errors=True)
+    
+    # Get new version from updated main.py
+    new_version = SYSTEM_VERSION
+    try:
+        with open(str(dst_main), "r", encoding="utf-8") as f:
+            content = f.read()
+            m = re.search(r'SYSTEM_VERSION\s*=\s*"([^"]+)"', content)
+            if m:
+                new_version = m.group(1)
+    except Exception:
+        pass
+    
+    return {
+        "ok": True,
+        "previous_version": SYSTEM_VERSION,
+        "new_version": new_version,
+        "backup_file": auto_backup_name,
+        "updated_files": updated_files,
+        "message": f"به‌روزرسانی از {source}:{branch} انجام شد. {len(updated_files)} فایل آپدیت شد. سرور باید ری‌استارت شود.",
+        "restart_required": True,
+    }
+
+@app.post("/api/system/update/upload")
+async def system_update_upload(request: Request, file: UploadFile = File(...)):
+    """Apply update from an uploaded ZIP file (manual update)."""
+    user = current_user(request)
+    require_perm(user, "settings.view")
+    
+    # Auto-backup
+    SYSTEM_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    auto_backup_name = f"pre_update_{now().replace(':','-').replace('.','_')}.sqlite3.bak"
+    auto_backup_path = SYSTEM_BACKUP_DIR / auto_backup_name
+    shutil.copy2(str(DB_PATH), str(auto_backup_path))
+    
+    content = await file.read()
+    temp_dir = Path(tempfile.mkdtemp(prefix="yfg_upload_"))
+    zip_path = temp_dir / "upload.zip"
+    zip_path.write_bytes(content)
+    
+    try:
+        with zipfile.ZipFile(str(zip_path), "r") as zf:
+            zf.extractall(str(temp_dir / "extracted"))
+    except Exception as e:
+        shutil.rmtree(str(temp_dir), ignore_errors=True)
+        return {"ok": False, "error": f"استخراج ZIP ناموفق: {e}"}
+    
+    # Find the extracted folder
+    extracted_root = temp_dir / "extracted"
+    # Check if there's a yafgtax-main folder or direct structure
+    repo_dir = extracted_root
+    if (extracted_root / "yfg-accounting").exists():
+        repo_dir = extracted_root
+    else:
+        subdirs = list(extracted_root.iterdir())
+        if subdirs and (subdirs[0] / "yfg-accounting").exists():
+            repo_dir = subdirs[0]
+    
+    updated_files = []
+    
+    # Copy main.py
+    src_main = repo_dir / "yfg-accounting" / "app" / "main.py"
+    dst_main = ROOT / "app" / "main.py"
+    if src_main.exists():
+        shutil.copy2(str(src_main), str(dst_main))
+        updated_files.append("app/main.py")
+    
+    # Copy static files
+    src_static = repo_dir / "yfg-accounting" / "app" / "static"
+    dst_static = ROOT / "app" / "static"
+    if src_static.exists():
+        for f in src_static.iterdir():
+            if f.is_file():
+                shutil.copy2(str(f), str(dst_static / f.name))
+                updated_files.append(f"app/static/{f.name}")
+    
+    # Copy public/static
+    src_public = repo_dir / "public" / "static"
+    dst_public = ROOT.parent / "public" / "static" if (ROOT.parent / "public" / "static").exists() else None
+    if src_public.exists() and dst_public:
+        for f in src_public.iterdir():
+            if f.is_file():
+                shutil.copy2(str(f), str(dst_public / f.name))
+                updated_files.append(f"public/static/{f.name}")
+    
+    shutil.rmtree(str(temp_dir), ignore_errors=True)
+    
+    # Get new version
+    new_version = SYSTEM_VERSION
+    try:
+        with open(str(dst_main), "r", encoding="utf-8") as f:
+            content = f.read()
+            m = re.search(r'SYSTEM_VERSION\s*=\s*"([^"]+)"', content)
+            if m:
+                new_version = m.group(1)
+    except Exception:
+        pass
+    
+    return {
+        "ok": True,
+        "previous_version": SYSTEM_VERSION,
+        "new_version": new_version,
+        "backup_file": auto_backup_name,
+        "updated_files": updated_files,
+        "message": f"به‌روزرسانی از فایل آپلودی انجام شد. {len(updated_files)} فایل آپدیت شد. سرور باید ری‌استارت شود.",
+        "restart_required": True,
+    }
+
+@app.post("/api/system/restart")
+def system_restart(request: Request):
+    """Restarts the backend server (schedules a delayed restart)."""
+    user = current_user(request)
+    require_perm(user, "settings.view")
+    
+    import threading
+    import time
+    import os
+    import signal
+    
+    def delayed_restart():
+        time.sleep(2)  # Wait for response to be sent
+        # Send SIGTERM to self — the watchdog/supervisor will restart us
+        os.kill(os.getpid(), signal.SIGTERM)
+    
+    threading.Thread(target=delayed_restart, daemon=True).start()
+    
+    return {
+        "ok": True,
+        "message": "سرور در حال ری‌استارت است. لطفاً ۵ ثانیه صبر کنید و سپس صفحه را رفرش کنید.",
+    }
