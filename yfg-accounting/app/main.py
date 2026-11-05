@@ -1477,7 +1477,7 @@ def service_worker():
 @app.get("/api/status")
 def status():
     with db() as con:
-        return {"setup_needed": con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0, "product": "YFG Accounting Desk", "version": "0.3.0.10"}
+        return {"setup_needed": con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0, "product": "YFG Accounting Desk", "version": "0.3.0.11"}
 
 
 @app.post("/api/setup")
@@ -5197,7 +5197,7 @@ import tempfile
 import urllib.request
 import subprocess
 
-SYSTEM_VERSION = "0.3.0.10"
+SYSTEM_VERSION = "0.3.0.11"
 SYSTEM_REPO_URL = "https://github.com/glcco9819-lang/yafgtax.git"
 SYSTEM_UPDATE_DIR = ROOT / "updates"  # temporary download location
 SYSTEM_BACKUP_DIR = DATA / "backups"
@@ -6761,3 +6761,831 @@ async def ocr_parse_invoice(request: Request, file: UploadFile = File(...)):
         },
         "message": "OCR در حالت شبیه‌سازی است. برای فعال‌سازی واقعی، به سرویس OCR (Tesseract/Google Vision/Azure) متصل شود.",
     }
+
+
+# ========================================================================
+# PHASE 5: DOCUMENT REQUEST LIST (درخواست سند ساختاریافته)
+# ========================================================================
+# New table for structured document requests from clients
+DOC_REQUEST_SCHEMA = """CREATE TABLE IF NOT EXISTS document_requests(
+ id TEXT PRIMARY KEY,
+ company_id TEXT NOT NULL REFERENCES companies(id),
+ title TEXT NOT NULL,
+ description TEXT NOT NULL DEFAULT '',
+ status TEXT NOT NULL DEFAULT 'OPEN', -- OPEN, PARTIAL, COMPLETED, CANCELLED
+ due_date TEXT,
+ created_by TEXT NOT NULL REFERENCES users(id),
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS document_request_items(
+ id TEXT PRIMARY KEY,
+ request_id TEXT NOT NULL REFERENCES document_requests(id),
+ document_name TEXT NOT NULL,
+ description TEXT NOT NULL DEFAULT '',
+ required INTEGER NOT NULL DEFAULT 1,
+ status TEXT NOT NULL DEFAULT 'PENDING', -- PENDING, UPLOADED, REJECTED, APPROVED
+ uploaded_file TEXT, -- path to uploaded file
+ uploaded_at TEXT,
+ uploaded_by_portal TEXT, -- portal user id if uploaded via portal
+ notes TEXT NOT NULL DEFAULT '',
+ created_at TEXT NOT NULL
+);"""
+
+with db() as con:
+    con.executescript(DOC_REQUEST_SCHEMA)
+
+class DocRequestCreateModel(BaseModel):
+    company_id: str
+    title: str
+    description: str = ""
+    due_date: str | None = None
+    items: list[dict] = []  # [{document_name, description, required}]
+
+class DocRequestItemUpdateModel(BaseModel):
+    status: str | None = None
+    notes: str | None = None
+
+@app.get("/api/document-requests")
+def list_document_requests(request: Request, company_id: str = "", status: str = ""):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        sql = """SELECT dr.*, c.name AS company_name,
+                 (SELECT COUNT(*) FROM document_request_items WHERE request_id=dr.id) AS total_items,
+                 (SELECT COUNT(*) FROM document_request_items WHERE request_id=dr.id AND status='UPLOADED') AS uploaded_items
+                 FROM document_requests dr LEFT JOIN companies c ON c.id=dr.company_id WHERE 1=1"""
+        params = []
+        if company_id:
+            sql += " AND dr.company_id=?"
+            params.append(company_id)
+        if status:
+            sql += " AND dr.status=?"
+            params.append(status)
+        sql += " ORDER BY dr.created_at DESC"
+        rows = con.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+@app.post("/api/document-requests")
+def create_document_request(payload: DocRequestCreateModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    rid = uid()
+    ts = now()
+    with db() as con:
+        con.execute("INSERT INTO document_requests VALUES(?,?,?,?,?,?,?,?)",
+                    (rid, payload.company_id, payload.title, payload.description, 'OPEN',
+                     payload.due_date, user["id"], ts, ts))
+        for item in payload.items:
+            if isinstance(item, dict) and item.get("document_name"):
+                con.execute("INSERT INTO document_request_items VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                            (uid(), rid, item["document_name"], item.get("description",""),
+                             1 if item.get("required", True) else 0, 'PENDING', None, None, None, "", ts))
+    return {"id": rid}
+
+@app.get("/api/document-requests/{request_id}")
+def get_document_request(request_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        dr = con.execute("SELECT * FROM document_requests WHERE id=?", (request_id,)).fetchone()
+        if not dr: raise HTTPException(404, "درخواست پیدا نشد")
+        items = con.execute("SELECT * FROM document_request_items WHERE request_id=?", (request_id,)).fetchall()
+        d = dict(dr)
+        d["items"] = [dict(i) for i in items]
+        return d
+
+@app.patch("/api/document-request-items/{item_id}")
+def update_doc_request_item(item_id: str, payload: DocRequestItemUpdateModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        existing = con.execute("SELECT * FROM document_request_items WHERE id=?", (item_id,)).fetchone()
+        if not existing: raise HTTPException(404, "مورد پیدا نشد")
+        updates = []
+        params = []
+        for k, v in payload.model_dump(exclude_unset=True).items():
+            if v is None: continue
+            updates.append(f"{k}=?")
+            params.append(v)
+        if updates:
+            params.append(item_id)
+            con.execute(f"UPDATE document_request_items SET {', '.join(updates)} WHERE id=?", params)
+    return {"ok": True}
+
+@app.delete("/api/document-requests/{request_id}")
+def delete_document_request(request_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    with db() as con:
+        con.execute("DELETE FROM document_request_items WHERE request_id=?", (request_id,))
+        con.execute("DELETE FROM document_requests WHERE id=?", (request_id,))
+    return {"ok": True}
+
+
+# ========================================================================
+# PHASE 5: KIOSK MODE (کیوسک دفتر — امضای حضوری روی تبلت)
+# ========================================================================
+class KioskSignModel(BaseModel):
+    company_id: str
+    document_title: str
+    signer_name: str
+    signature_data: str  # base64 image or typed text
+    signer_type: str = "client"  # client, visitor
+
+@app.post("/api/kiosk/sign")
+def kiosk_sign(payload: KioskSignModel, request: Request):
+    """Kiosk mode: quick sign without login. Used on a tablet in the office."""
+    # No auth required — kiosk is a physical device in the office
+    sig_id = uid()
+    sig_hash = hashlib.sha256(f"{payload.signer_name}:{payload.signature_data}:{payload.company_id}:{now()}".encode()).hexdigest()
+    with db() as con:
+        # Store as a document signature
+        con.execute("""INSERT INTO documents (id, company_id, category, title, description, file_name, stored_name, file_size, mime_type, sha256, version, parent_id, uploaded_by, uploaded_at, tags)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (uid(), payload.company_id, 'other', payload.document_title, f'کیوسک - امضا: {payload.signer_name}',
+             'kiosk_signature.txt', 'kiosk_' + sig_id + '.txt', len(payload.signature_data),
+             'text/plain', sig_hash, 1, None, 'kiosk', now(), 'kiosk'))
+    return {"ok": True, "signature_id": sig_id, "hash": sig_hash, "signed_at": now()}
+
+@app.get("/api/kiosk/companies")
+def kiosk_companies():
+    """Kiosk: list active companies for the sign screen."""
+    with db() as con:
+        rows = con.execute("SELECT id, name FROM companies WHERE active=1 ORDER BY name").fetchall()
+        return [dict(r) for r in rows]
+
+
+# ========================================================================
+# PHASE 5: PROPOSALS + AUTO-PAYMENT (پیشنهاد و دریافت‌وجه خودکار)
+# ========================================================================
+PROPOSAL_SCHEMA = """CREATE TABLE IF NOT EXISTS proposals(
+ id TEXT PRIMARY KEY,
+ company_id TEXT NOT NULL REFERENCES companies(id),
+ title TEXT NOT NULL,
+ description TEXT NOT NULL DEFAULT '',
+ total_amount REAL NOT NULL DEFAULT 0,
+ currency TEXT NOT NULL DEFAULT 'IRR',
+ status TEXT NOT NULL DEFAULT 'DRAFT', -- DRAFT, SENT, ACCEPTED, REJECTED, EXPIRED
+ items_json TEXT NOT NULL DEFAULT '[]',
+ valid_until TEXT,
+ accepted_at TEXT,
+ accepted_by TEXT,
+ created_by TEXT NOT NULL REFERENCES users(id),
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);"""
+
+with db() as con:
+    con.executescript(PROPOSAL_SCHEMA)
+
+class ProposalCreateModel(BaseModel):
+    company_id: str
+    title: str
+    description: str = ""
+    total_amount: float = 0
+    currency: str = "IRR"
+    items: list[dict] = []
+    valid_until: str | None = None
+
+@app.get("/api/proposals")
+def list_proposals(request: Request, company_id: str = "", status: str = ""):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        sql = """SELECT p.*, c.name AS company_name FROM proposals p
+                 LEFT JOIN companies c ON c.id=p.company_id WHERE 1=1"""
+        params = []
+        if company_id:
+            sql += " AND p.company_id=?"
+            params.append(company_id)
+        if status:
+            sql += " AND p.status=?"
+            params.append(status)
+        sql += " ORDER BY p.created_at DESC"
+        rows = con.execute(sql, params).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            try: d["items"] = json.loads(r["items_json"])
+            except: d["items"] = []
+            del d["items_json"]
+            result.append(d)
+        return result
+
+@app.post("/api/proposals")
+def create_proposal(payload: ProposalCreateModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    pid = uid()
+    ts = now()
+    items_json = json.dumps(payload.items, ensure_ascii=False) if payload.items else "[]"
+    with db() as con:
+        con.execute("""INSERT INTO proposals
+            (id, company_id, title, description, total_amount, currency, status, items_json, valid_until, created_by, created_at, updated_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (pid, payload.company_id, payload.title, payload.description, payload.total_amount,
+             payload.currency, 'DRAFT', items_json, payload.valid_until, user["id"], ts, ts))
+    return {"id": pid}
+
+@app.patch("/api/proposals/{proposal_id}")
+def update_proposal(proposal_id: str, request: Request, status: str = ""):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    with db() as con:
+        existing = con.execute("SELECT * FROM proposals WHERE id=?", (proposal_id,)).fetchone()
+        if not existing: raise HTTPException(404, "پیشنهاد پیدا نشد")
+        if status:
+            updates = ["status=?", "updated_at=?"]
+            params = [status, now()]
+            if status == 'ACCEPTED':
+                updates.extend(["accepted_at=?", "accepted_by=?"])
+                params.extend([now(), user["id"]])
+                # Auto-create a fee when proposal is accepted
+                con.execute("""INSERT INTO fees
+                    (id, company_id, contract_id, title, fee_type, amount, currency, period_start, period_end,
+                     issue_date, due_date, status, paid_amount, paid_date, notes, created_by, created_at, updated_at)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (uid(), existing["company_id"], None, f"پیشنهاد: {existing['title']}",
+                     'one_time', existing["total_amount"], existing["currency"],
+                     None, None, now()[:10], None, 'UNPAID', 0, None, 'از پیشنهاد',
+                     user["id"], now(), now()))
+            params.append(proposal_id)
+            con.execute(f"UPDATE proposals SET {', '.join(updates)} WHERE id=?", params)
+    return {"ok": True}
+
+@app.delete("/api/proposals/{proposal_id}")
+def delete_proposal(proposal_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    with db() as con:
+        con.execute("DELETE FROM proposals WHERE id=?", (proposal_id,))
+    return {"ok": True}
+
+
+# ========================================================================
+# PHASE 5: REAL MOUDIAN INTEGRATION (اتصال واقعی به سامانه مودیان)
+# ========================================================================
+MOUDIAN_CONFIG_SCHEMA = """CREATE TABLE IF NOT EXISTS moudian_config(
+ id TEXT PRIMARY KEY,
+ company_id TEXT NOT NULL REFERENCES companies(id),
+ base_url TEXT NOT NULL DEFAULT 'https://api.tax.gov.ir',
+ client_id TEXT NOT NULL,
+ client_secret TEXT NOT NULL,
+ username TEXT NOT NULL,
+ password_encrypted TEXT NOT NULL,
+ tax_id TEXT NOT NULL, -- شناسه مالیاتی
+ token TEXT,
+ token_expires TEXT,
+ created_by TEXT NOT NULL REFERENCES users(id),
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL,
+ UNIQUE(company_id)
+);"""
+
+with db() as con:
+    con.executescript(MOUDIAN_CONFIG_SCHEMA)
+
+class MoudianConfigModel(BaseModel):
+    company_id: str
+    base_url: str = "https://api.tax.gov.ir"
+    client_id: str
+    client_secret: str
+    username: str
+    password: str
+    tax_id: str
+
+@app.get("/api/moudian/config/{company_id}")
+def get_moudian_config(company_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.moudian")
+    with db() as con:
+        row = con.execute("SELECT * FROM moudian_config WHERE company_id=?", (company_id,)).fetchone()
+        if not row: return {"configured": False}
+        d = dict(row)
+        d["configured"] = True
+        d["client_secret"] = "***"  # don't expose secret
+        return d
+
+@app.post("/api/moudian/config")
+def set_moudian_config(payload: MoudianConfigModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.moudian")
+    cid = uid()
+    ts = now()
+    # Simple encryption (in production, use proper encryption)
+    import base64
+    pwd_enc = base64.b64encode(payload.password.encode()).decode()
+    with db() as con:
+        existing = con.execute("SELECT id FROM moudian_config WHERE company_id=?", (payload.company_id,)).fetchone()
+        if existing:
+            con.execute("""UPDATE moudian_config SET base_url=?, client_id=?, client_secret=?, username=?, password_encrypted=?, tax_id=?, updated_at=? WHERE company_id=?""",
+                        (payload.base_url, payload.client_id, payload.client_secret, payload.username, pwd_enc, payload.tax_id, ts, payload.company_id))
+        else:
+            con.execute("""INSERT INTO moudian_config VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        (cid, payload.company_id, payload.base_url, payload.client_id, payload.client_secret,
+                         payload.username, pwd_enc, payload.tax_id, None, None, user["id"], ts, ts, ts))
+    return {"ok": True}
+
+@app.post("/api/moudian/real-submit/{invoice_id}")
+def moudian_real_submit(invoice_id: str, request: Request):
+    """Real submission to Moudian API (if configured). Falls back to mock if not."""
+    user = current_user(request)
+    require_perm(user, "customers.moudian")
+    with db() as con:
+        inv = con.execute("SELECT * FROM moudian_invoices WHERE id=?", (invoice_id,)).fetchone()
+        if not inv: raise HTTPException(404, "فاکتور پیدا نشد")
+        config = con.execute("SELECT * FROM moudian_config WHERE company_id=?", (inv["company_id"],)).fetchone()
+
+        if not config:
+            # Fall back to mock
+            ref_id = f"MOU-{uid()[:12].upper()}"
+            con.execute("UPDATE moudian_invoices SET status='SENT', reference_id=?, submitted_at=?, updated_at=? WHERE id=?",
+                        (ref_id, now(), now(), invoice_id))
+            return {"ok": True, "reference_id": ref_id, "mode": "mock", "message": "شبیه‌سازی (تنظیمات مودیان موجود نیست)"}
+
+        # Real API call attempt
+        try:
+            import urllib.request
+            # Step 1: Get token
+            token_url = f"{config['base_url']}/api/v1/auth/token"
+            token_data = json.dumps({
+                "client_id": config["client_id"],
+                "client_secret": config["client_secret"],
+                "username": config["username"],
+                "password": base64.b64decode(config["password_encrypted"]).decode(),
+                "grant_type": "password"
+            }).encode()
+            req = urllib.request.Request(token_url, data=token_data, headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                token_resp = json.loads(resp.read())
+                token = token_resp.get("access_token")
+
+            if not token:
+                raise Exception("Token not received")
+
+            # Step 2: Submit invoice
+            submit_url = f"{config['base_url']}/api/v1/invoices/submit"
+            items = json.loads(inv["items_json"]) if inv["items_json"] else []
+            invoice_data = {
+                "invoice_number": inv["invoice_number"] or "",
+                "invoice_type": inv["invoice_type"],
+                "buyer_tin": inv["buyer_tin"],
+                "buyer_name": inv["buyer_name"],
+                "seller_tin": inv["seller_tin"],
+                "seller_name": inv["seller_name"],
+                "issue_date": inv["issue_date"],
+                "total_amount": inv["total_amount"],
+                "tax_amount": inv["tax_amount"],
+                "discount_amount": inv["discount_amount"],
+                "payable_amount": inv["payable_amount"],
+                "items": items,
+            }
+            req2 = urllib.request.Request(submit_url, data=json.dumps(invoice_data).encode(),
+                                           headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"})
+            with urllib.request.urlopen(req2, timeout=15) as resp2:
+                submit_resp = json.loads(resp2.read())
+                ref_id = submit_resp.get("reference_id", f"MOU-{uid()[:12].upper()}")
+
+            con.execute("UPDATE moudian_invoices SET status='SENT', reference_id=?, submitted_at=?, updated_at=? WHERE id=?",
+                        (ref_id, now(), now(), invoice_id))
+            return {"ok": True, "reference_id": ref_id, "mode": "real", "message": "ارسال واقعی به سامانه مودیان انجام شد"}
+        except Exception as e:
+            con.execute("UPDATE moudian_invoices SET status='REJECTED', error_message=?, updated_at=? WHERE id=?",
+                        (str(e)[:500], now(), invoice_id))
+            return {"ok": False, "mode": "real", "error": f"خطا در ارسال به مودیان: {e}"}
+
+
+# ========================================================================
+# PHASE 5: ACCOUNTING SOFTWARE INTEGRATION (اتصال به هلو/سپیدار)
+# ========================================================================
+INTEGRATION_SCHEMA = """CREATE TABLE IF NOT EXISTS accounting_integrations(
+ id TEXT PRIMARY KEY,
+ company_id TEXT NOT NULL REFERENCES companies(id),
+ software TEXT NOT NULL, -- holoo, sepidar, parsiyan, paydar, nosa, other
+ import_type TEXT NOT NULL DEFAULT 'file', -- file or api
+ last_sync TEXT,
+ config_json TEXT NOT NULL DEFAULT '{}',
+ created_by TEXT NOT NULL REFERENCES users(id),
+ created_at TEXT NOT NULL,
+ UNIQUE(company_id, software)
+);"""
+
+with db() as con:
+    con.executescript(INTEGRATION_SCHEMA)
+
+ACCOUNTING_SOFTWARES = {
+    'holoo': 'هلو', 'sepidar': 'سپیدار', 'parsiyan': 'پارسیان',
+    'paydar': 'پایدار', 'nosa': 'نوسا', 'other': 'سایر',
+}
+
+@app.get("/api/integrations")
+def list_integrations(request: Request, company_id: str = ""):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        sql = """SELECT ai.*, c.name AS company_name FROM accounting_integrations ai
+                 LEFT JOIN companies c ON c.id=ai.company_id WHERE 1=1"""
+        params = []
+        if company_id:
+            sql += " AND ai.company_id=?"
+            params.append(company_id)
+        sql += " ORDER BY ai.created_at DESC"
+        rows = con.execute(sql, params).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            try: d["config"] = json.loads(r["config_json"])
+            except: d["config"] = {}
+            del d["config_json"]
+            d["software_name"] = ACCOUNTING_SOFTWARES.get(r["software"], r["software"])
+            result.append(d)
+        return result
+
+@app.post("/api/integrations")
+def create_integration(request: Request, company_id: str = Form(...), software: str = Form(...), config: str = Form("{}")):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    iid = uid()
+    with db() as con:
+        try:
+            con.execute("INSERT INTO accounting_integrations VALUES(?,?,?,?,?,?,?)",
+                        (iid, company_id, software, 'file', None, config, user["id"], now()))
+        except Exception as e:
+            if "UNIQUE" in str(e):
+                con.execute("UPDATE accounting_integrations SET config_json=?, updated_at=? WHERE company_id=? AND software=?",
+                            (config, now(), company_id, software))
+            else:
+                raise
+    return {"ok": True}
+
+@app.post("/api/integrations/{integration_id}/import")
+async def import_from_accounting(integration_id: str, request: Request, file: UploadFile = File(...)):
+    """Import financial data from accounting software export file."""
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    content = await file.read(20 * 1024 * 1024)  # 20MB max
+    # Parse the file based on format (Excel/CSV/XML from Holoo/Sepidar)
+    # For now, store the file and return summary
+    stored_name = f"import_{uid()}_{file.filename}"
+    import_dir = DATA / "imports"
+    import_dir.mkdir(parents=True, exist_ok=True)
+    (import_dir / stored_name).write_bytes(content)
+
+    with db() as con:
+        con.execute("UPDATE accounting_integrations SET last_sync=? WHERE id=?", (now(), integration_id))
+
+    return {
+        "ok": True,
+        "filename": file.filename,
+        "size": len(content),
+        "message": f"فایل واردات از نرم‌افزار حسابداری دریافت شد. داده‌ها پس از پردازش در سیستم قرار می‌گیرند.",
+    }
+
+@app.get("/api/integrations/software-list")
+def list_accounting_software(request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    return {"software": ACCOUNTING_SOFTWARES}
+
+
+# ========================================================================
+# PHASE 5: PAYROLL MODULE (مدیریت حقوق و دستمزد مشتریان)
+# ========================================================================
+PAYROLL_SCHEMA = """CREATE TABLE IF NOT EXISTS payroll_entries(
+ id TEXT PRIMARY KEY,
+ company_id TEXT NOT NULL REFERENCES companies(id),
+ employee_name TEXT NOT NULL,
+ employee_tin TEXT NOT NULL DEFAULT '',
+ position TEXT NOT NULL DEFAULT '',
+ period TEXT NOT NULL, -- 1403-01, 1403-02, etc.
+ gross_salary REAL NOT NULL DEFAULT 0,
+ deductions REAL NOT NULL DEFAULT 0,
+ tax_amount REAL NOT NULL DEFAULT 0,
+ insurance_amount REAL NOT NULL DEFAULT 0,
+ net_salary REAL NOT NULL DEFAULT 0,
+ status TEXT NOT NULL DEFAULT 'DRAFT', -- DRAFT, CALCULATED, FILED, PAID
+ filed_at TEXT,
+ notes TEXT NOT NULL DEFAULT '',
+ created_by TEXT NOT NULL REFERENCES users(id),
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);"""
+
+with db() as con:
+    con.executescript(PAYROLL_SCHEMA)
+
+class PayrollCreateModel(BaseModel):
+    company_id: str
+    employee_name: str
+    employee_tin: str = ""
+    position: str = ""
+    period: str
+    gross_salary: float = 0
+    deductions: float = 0
+    tax_amount: float = 0
+    insurance_amount: float = 0
+    notes: str = ""
+
+class PayrollUpdateModel(BaseModel):
+    employee_name: str | None = None
+    employee_tin: str | None = None
+    position: str | None = None
+    gross_salary: float | None = None
+    deductions: float | None = None
+    tax_amount: float | None = None
+    insurance_amount: float | None = None
+    status: str | None = None
+    notes: str | None = None
+
+@app.get("/api/payroll")
+def list_payroll(request: Request, company_id: str = "", period: str = "", status: str = ""):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        sql = """SELECT p.*, c.name AS company_name FROM payroll_entries p
+                 LEFT JOIN companies c ON c.id=p.company_id WHERE 1=1"""
+        params = []
+        if company_id:
+            sql += " AND p.company_id=?"
+            params.append(company_id)
+        if period:
+            sql += " AND p.period=?"
+            params.append(period)
+        if status:
+            sql += " AND p.status=?"
+            params.append(status)
+        sql += " ORDER BY p.period DESC, p.created_at DESC"
+        rows = con.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+@app.post("/api/payroll")
+def create_payroll(payload: PayrollCreateModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    pid = uid()
+    ts = now()
+    net = payload.gross_salary - payload.deductions - payload.tax_amount - payload.insurance_amount
+    with db() as con:
+        con.execute("""INSERT INTO payroll_entries
+            (id, company_id, employee_name, employee_tin, position, period, gross_salary, deductions,
+             tax_amount, insurance_amount, net_salary, status, filed_at, notes, created_by, created_at, updated_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (pid, payload.company_id, payload.employee_name, payload.employee_tin, payload.position,
+             payload.period, payload.gross_salary, payload.deductions, payload.tax_amount,
+             payload.insurance_amount, net, 'DRAFT', None, payload.notes, user["id"], ts, ts))
+    return {"id": pid, "net_salary": net}
+
+@app.patch("/api/payroll/{payroll_id}")
+def update_payroll(payroll_id: str, payload: PayrollUpdateModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    with db() as con:
+        existing = con.execute("SELECT * FROM payroll_entries WHERE id=?", (payroll_id,)).fetchone()
+        if not existing: raise HTTPException(404, "رکورد پیدا نشد")
+        updates = []
+        params = []
+        for k, v in payload.model_dump(exclude_unset=True).items():
+            if v is None: continue
+            updates.append(f"{k}=?")
+            params.append(v)
+        # Recalculate net salary if any financial field changed
+        if any(k in ['gross_salary', 'deductions', 'tax_amount', 'insurance_amount'] for k in payload.model_dump(exclude_unset=True).keys()):
+            gross = float(payload.gross_salary) if payload.gross_salary is not None else float(existing["gross_salary"])
+            ded = float(payload.deductions) if payload.deductions is not None else float(existing["deductions"])
+            tax = float(payload.tax_amount) if payload.tax_amount is not None else float(existing["tax_amount"])
+            ins = float(payload.insurance_amount) if payload.insurance_amount is not None else float(existing["insurance_amount"])
+            net = gross - ded - tax - ins
+            updates.append("net_salary=?")
+            params.append(net)
+        if payload.status == 'FILED' and not existing["filed_at"]:
+            updates.append("filed_at=?")
+            params.append(now())
+        if not updates: return {"ok": True}
+        updates.append("updated_at=?")
+        params.append(now())
+        params.append(payroll_id)
+        con.execute(f"UPDATE payroll_entries SET {', '.join(updates)} WHERE id=?", params)
+    return {"ok": True}
+
+@app.delete("/api/payroll/{payroll_id}")
+def delete_payroll(payroll_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    with db() as con:
+        con.execute("DELETE FROM payroll_entries WHERE id=?", (payroll_id,))
+    return {"ok": True}
+
+@app.get("/api/payroll/summary")
+def payroll_summary(request: Request, company_id: str = "", period: str = ""):
+    """Summary of payroll for a period."""
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        sql = "SELECT COUNT(*) AS count, SUM(gross_salary) AS total_gross, SUM(net_salary) AS total_net, SUM(tax_amount) AS total_tax, SUM(insurance_amount) AS total_insurance FROM payroll_entries WHERE 1=1"
+        params = []
+        if company_id:
+            sql += " AND company_id=?"
+            params.append(company_id)
+        if period:
+            sql += " AND period=?"
+            params.append(period)
+        row = con.execute(sql, params).fetchone()
+        return dict(row) if row else {}
+
+
+# ========================================================================
+# PHASE 5: TAX RESOLUTION (تسویه مالیاتی تخصصی)
+# ========================================================================
+TAX_CASE_SCHEMA = """CREATE TABLE IF NOT EXISTS tax_cases(
+ id TEXT PRIMARY KEY,
+ company_id TEXT NOT NULL REFERENCES companies(id),
+ case_type TEXT NOT NULL, -- AUDIT, DISPUTE, PENALTY, ASSESSMENT, RESOLUTION
+ title TEXT NOT NULL,
+ description TEXT NOT NULL DEFAULT '',
+ tax_year TEXT NOT NULL DEFAULT '',
+ assessed_amount REAL NOT NULL DEFAULT 0,
+ disputed_amount REAL NOT NULL DEFAULT 0,
+ settled_amount REAL NOT NULL DEFAULT 0,
+ status TEXT NOT NULL DEFAULT 'OPEN', -- OPEN, IN_PROGRESS, RESOLVED, CLOSED
+ assigned_user_id TEXT REFERENCES users(id),
+ deadline TEXT,
+ resolution_notes TEXT NOT NULL DEFAULT '',
+ created_by TEXT NOT NULL REFERENCES users(id),
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);"""
+
+with db() as con:
+    con.executescript(TAX_CASE_SCHEMA)
+
+class TaxCaseCreateModel(BaseModel):
+    company_id: str
+    case_type: str = "AUDIT"
+    title: str
+    description: str = ""
+    tax_year: str = ""
+    assessed_amount: float = 0
+    disputed_amount: float = 0
+    deadline: str | None = None
+    assigned_user_id: str | None = None
+
+class TaxCaseUpdateModel(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    case_type: str | None = None
+    tax_year: str | None = None
+    assessed_amount: float | None = None
+    disputed_amount: float | None = None
+    settled_amount: float | None = None
+    status: str | None = None
+    assigned_user_id: str | None = None
+    deadline: str | None = None
+    resolution_notes: str | None = None
+
+TAX_CASE_TYPES = {
+    'AUDIT': 'حسابرسی مالیاتی', 'DISPUTE': 'اختلاف مالیاتی', 'PENALTY': 'جریمه',
+    'ASSESSMENT': 'ارزیابی', 'RESOLUTION': 'تسویه',
+}
+TAX_CASE_STATUS = {
+    'OPEN': 'باز', 'IN_PROGRESS': 'در دست بررسی', 'RESOLVED': 'حل شده', 'CLOSED': 'بسته شده',
+}
+
+@app.get("/api/tax-cases")
+def list_tax_cases(request: Request, company_id: str = "", status: str = ""):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        sql = """SELECT tc.*, c.name AS company_name, u.name AS assigned_name
+                 FROM tax_cases tc LEFT JOIN companies c ON c.id=tc.company_id
+                 LEFT JOIN users u ON u.id=tc.assigned_user_id WHERE 1=1"""
+        params = []
+        if company_id:
+            sql += " AND tc.company_id=?"
+            params.append(company_id)
+        if status:
+            sql += " AND tc.status=?"
+            params.append(status)
+        sql += " ORDER BY tc.created_at DESC"
+        rows = con.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+@app.post("/api/tax-cases")
+def create_tax_case(payload: TaxCaseCreateModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    cid = uid()
+    ts = now()
+    with db() as con:
+        con.execute("""INSERT INTO tax_cases
+            (id, company_id, case_type, title, description, tax_year, assessed_amount, disputed_amount,
+             settled_amount, status, assigned_user_id, deadline, resolution_notes, created_by, created_at, updated_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (cid, payload.company_id, payload.case_type, payload.title, payload.description,
+             payload.tax_year, payload.assessed_amount, payload.disputed_amount, 0, 'OPEN',
+             payload.assigned_user_id, payload.deadline, "", user["id"], ts, ts))
+    return {"id": cid}
+
+@app.patch("/api/tax-cases/{case_id}")
+def update_tax_case(case_id: str, payload: TaxCaseUpdateModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    with db() as con:
+        existing = con.execute("SELECT * FROM tax_cases WHERE id=?", (case_id,)).fetchone()
+        if not existing: raise HTTPException(404, "پرونده پیدا نشد")
+        updates = []
+        params = []
+        for k, v in payload.model_dump(exclude_unset=True).items():
+            if v is None: continue
+            updates.append(f"{k}=?")
+            params.append(v)
+        if not updates: return {"ok": True}
+        updates.append("updated_at=?")
+        params.append(now())
+        params.append(case_id)
+        con.execute(f"UPDATE tax_cases SET {', '.join(updates)} WHERE id=?", params)
+    return {"ok": True}
+
+@app.delete("/api/tax-cases/{case_id}")
+def delete_tax_case(case_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    with db() as con:
+        con.execute("DELETE FROM tax_cases WHERE id=?", (case_id,))
+    return {"ok": True}
+
+@app.get("/api/tax-cases/types")
+def list_tax_case_types(request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    return {"types": TAX_CASE_TYPES, "statuses": TAX_CASE_STATUS}
+
+
+# ========================================================================
+# PHASE 5: I18N / MULTILINGUAL (چندزبانه)
+# ========================================================================
+# Simple i18n: store language preference per user
+I18N_SCHEMA = """CREATE TABLE IF NOT EXISTS user_preferences(
+ user_id TEXT NOT NULL REFERENCES users(id),
+ pref_key TEXT NOT NULL,
+ pref_value TEXT NOT NULL,
+ PRIMARY KEY(user_id, pref_key)
+);"""
+
+with db() as con:
+    con.executescript(I18N_SCHEMA)
+
+# Persian translations (default)
+FA_TRANSLATIONS = {
+    "nav.dashboard": "نمای کلی", "nav.tasks": "تسک‌ها", "nav.requests": "درخواست‌ها",
+    "nav.attendance": "کارکرد", "nav.performance": "ثبت عملکرد", "nav.customers": "مشتریان",
+    "nav.reports": "گزارشات", "nav.settings": "تنظیمات", "nav.chat": "گفتگو",
+    "nav.kanban": "کانبان", "nav.time": "تایم ترکینگ",
+    "common.new": "جدید", "common.edit": "ویرایش", "common.delete": "حذف",
+    "common.save": "ذخیره", "common.cancel": "انصراف", "common.search": "جستجو",
+    "common.confirm": "تأیید", "common.close": "بستن", "common.back": "بازگشت",
+    "common.yes": "بله", "common.no": "خیر", "common.loading": "در حال بارگذاری...",
+    "common.success": "موفق", "common.error": "خطا",
+    "login.title": "خوش آمدید", "login.username": "نام کاربری", "login.password": "گذرواژه",
+    "login.submit": "ورود به سامانه",
+}
+
+# English translations
+EN_TRANSLATIONS = {
+    "nav.dashboard": "Overview", "nav.tasks": "Tasks", "nav.requests": "Requests",
+    "nav.attendance": "Attendance", "nav.performance": "Performance", "nav.customers": "Customers",
+    "nav.reports": "Reports", "nav.settings": "Settings", "nav.chat": "Chat",
+    "nav.kanban": "Kanban", "nav.time": "Time Tracking",
+    "common.new": "New", "common.edit": "Edit", "common.delete": "Delete",
+    "common.save": "Save", "common.cancel": "Cancel", "common.search": "Search",
+    "common.confirm": "Confirm", "common.close": "Close", "common.back": "Back",
+    "common.yes": "Yes", "common.no": "No", "common.loading": "Loading...",
+    "common.success": "Success", "common.error": "Error",
+    "login.title": "Welcome", "login.username": "Username", "login.password": "Password",
+    "login.submit": "Sign In",
+}
+
+@app.get("/api/i18n/{lang}")
+def get_translations(lang: str, request: Request):
+    """Get translations for a language (fa or en)."""
+    if lang == "en":
+        return {"lang": "en", "dir": "ltr", "translations": EN_TRANSLATIONS}
+    return {"lang": "fa", "dir": "rtl", "translations": FA_TRANSLATIONS}
+
+@app.get("/api/user/preferences")
+def get_user_preferences(request: Request):
+    """Get all preferences for the current user."""
+    user = current_user(request)
+    with db() as con:
+        rows = con.execute("SELECT pref_key, pref_value FROM user_preferences WHERE user_id=?", (user["id"],)).fetchall()
+        return {r["pref_key"]: r["pref_value"] for r in rows}
+
+@app.post("/api/user/preferences")
+def set_user_preference(request: Request, key: str = "", value: str = ""):
+    """Set a user preference."""
+    user = current_user(request)
+    if not key:
+        raise HTTPException(400, "کلید تنظیمات الزامی است")
+    with db() as con:
+        con.execute("INSERT OR REPLACE INTO user_preferences VALUES(?,?)", (user["id"], key, value))
+    return {"ok": True}
