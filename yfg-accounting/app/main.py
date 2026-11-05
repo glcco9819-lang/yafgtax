@@ -466,6 +466,88 @@ INSERT OR IGNORE INTO performance_types VALUES('pft3','حسابرسی','audit','
 INSERT OR IGNORE INTO performance_types VALUES('pft4','اداری','admin','کارهای اداری',1,datetime('now'));
 INSERT OR IGNORE INTO performance_types VALUES('pft5','مشاوره','consult','مشاوره و پشتیبانی',1,datetime('now'));
 INSERT OR IGNORE INTO performance_types VALUES('pft6','سایر','other','سایر کارها',1,datetime('now'));
+
+-- Phase 1: Tax Deadlines Calendar (تقویم سررسیدهای مالیاتی)
+CREATE TABLE IF NOT EXISTS tax_deadlines(
+ id TEXT PRIMARY KEY,
+ company_id TEXT NOT NULL REFERENCES companies(id),
+ deadline_type TEXT NOT NULL, -- VAT_QUARTERLY, ANNUAL_RETURN, PAYROLL_TAX, SOCIAL_SECURITY, MOUDIAN, AUDIT, OTHER
+ title TEXT NOT NULL,
+ due_date TEXT NOT NULL, -- ISO date
+ period_label TEXT NOT NULL DEFAULT '', -- مثلاً "زمستان ۱۴۰۳"
+ amount REAL, -- مبلغ مورد انتظار (اختیاری)
+ status TEXT NOT NULL DEFAULT 'PENDING', -- PENDING, FILED, PAID, OVERDUE, CANCELLED
+ notes TEXT NOT NULL DEFAULT '',
+ assigned_user_id TEXT REFERENCES users(id),
+ completed_at TEXT,
+ completed_by TEXT REFERENCES users(id),
+ created_by TEXT NOT NULL REFERENCES users(id),
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+
+-- Phase 1: Company Staff Assignment (تخصیص کارمند به شرکت)
+CREATE TABLE IF NOT EXISTS company_staff(
+ id TEXT PRIMARY KEY,
+ company_id TEXT NOT NULL REFERENCES companies(id),
+ user_id TEXT NOT NULL REFERENCES users(id),
+ role TEXT NOT NULL DEFAULT 'accountant', -- lead, accountant, assistant
+ assigned_at TEXT NOT NULL,
+ assigned_by TEXT NOT NULL REFERENCES users(id),
+ active INTEGER NOT NULL DEFAULT 1,
+ notes TEXT NOT NULL DEFAULT '',
+ UNIQUE(company_id, user_id)
+);
+
+-- Phase 1: Fee Module (ماژول Fee و مطالبات)
+CREATE TABLE IF NOT EXISTS fees(
+ id TEXT PRIMARY KEY,
+ company_id TEXT NOT NULL REFERENCES companies(id),
+ contract_id TEXT REFERENCES contracts(id),
+ title TEXT NOT NULL,
+ fee_type TEXT NOT NULL DEFAULT 'monthly', -- monthly, quarterly, annual, hourly, one_time
+ amount REAL NOT NULL DEFAULT 0,
+ currency TEXT NOT NULL DEFAULT 'IRR',
+ period_start TEXT,
+ period_end TEXT,
+ issue_date TEXT NOT NULL,
+ due_date TEXT,
+ status TEXT NOT NULL DEFAULT 'UNPAID', -- UNPAID, PARTIAL, PAID, OVERDUE, CANCELLED
+ paid_amount REAL NOT NULL DEFAULT 0,
+ paid_date TEXT,
+ notes TEXT NOT NULL DEFAULT '',
+ created_by TEXT NOT NULL REFERENCES users(id),
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+
+-- Phase 1: Moudian System (سامانه مودیان — فاکتور الکترونیکی)
+CREATE TABLE IF NOT EXISTS moudian_invoices(
+ id TEXT PRIMARY KEY,
+ company_id TEXT NOT NULL REFERENCES companies(id),
+ invoice_id TEXT, -- کد فاکتور در سامانه مودیان
+ invoice_number TEXT, -- شماره فاکتور داخلی
+ invoice_type TEXT NOT NULL DEFAULT 'SALES', -- SALES, PURCHASE, RETURN
+ buyer_tin TEXT, -- شناسه اقتصادی خریدار
+ buyer_name TEXT,
+ seller_tin TEXT, -- شناسه اقتصادی فروشنده (شرکت)
+ seller_name TEXT,
+ issue_date TEXT NOT NULL,
+ total_amount REAL NOT NULL DEFAULT 0,
+ tax_amount REAL NOT NULL DEFAULT 0,
+ discount_amount REAL NOT NULL DEFAULT 0,
+ payable_amount REAL NOT NULL DEFAULT 0,
+ items_json TEXT NOT NULL DEFAULT '[]',
+ status TEXT NOT NULL DEFAULT 'DRAFT', -- DRAFT, PENDING, SENT, ACCEPTED, REJECTED, CANCELLED
+ reference_id TEXT, -- کد رهگیری از سامانه مودیان
+ submitted_at TEXT,
+ error_message TEXT NOT NULL DEFAULT '',
+ created_by TEXT NOT NULL REFERENCES users(id),
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+
+-- Seed default tax deadline types
 """
 
 
@@ -663,6 +745,9 @@ PERMISSION_CATALOG = [
         {"key": "customers.contracts", "label": "مدیریت قراردادها", "roles": ["ADMIN", "CEO"]},
         {"key": "customers.proformas", "label": "مدیریت پیش فاکتورها", "roles": ["ADMIN", "CEO"]},
         {"key": "customers.invoices", "label": "مدیریت فاکتورها", "roles": ["ADMIN", "CEO"]},
+        {"key": "customers.tax", "label": "مدیریت سررسیدهای مالیاتی", "roles": ["ADMIN", "CEO"]},
+        {"key": "customers.fees", "label": "مدیریت مطالبات و Fee", "roles": ["ADMIN", "CEO"]},
+        {"key": "customers.moudian", "label": "مدیریت فاکتورهای مودیان", "roles": ["ADMIN", "CEO"]},
     ]},
 ]
 
@@ -1325,7 +1410,7 @@ def service_worker():
 @app.get("/api/status")
 def status():
     with db() as con:
-        return {"setup_needed": con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0, "product": "YFG Accounting Desk", "version": "0.3.0.06"}
+        return {"setup_needed": con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0, "product": "YFG Accounting Desk", "version": "0.3.0.07"}
 
 
 @app.post("/api/setup")
@@ -5045,7 +5130,7 @@ import tempfile
 import urllib.request
 import subprocess
 
-SYSTEM_VERSION = "0.3.0.06"
+SYSTEM_VERSION = "0.3.0.07"
 SYSTEM_REPO_URL = "https://github.com/glcco9819-lang/yafgtax.git"
 SYSTEM_UPDATE_DIR = ROOT / "updates"  # temporary download location
 SYSTEM_BACKUP_DIR = DATA / "backups"
@@ -5372,3 +5457,455 @@ def system_restart(request: Request):
         "ok": True,
         "message": "سرور در حال ری‌استارت است. لطفاً ۵ ثانیه صبر کنید و سپس صفحه را رفرش کنید.",
     }
+
+
+# ========================================================================
+# PHASE 1: TAX DEADLINES API (تقویم سررسیدهای مالیاتی)
+# ========================================================================
+TAX_DEADLINE_TYPES = {
+    'VAT_QUARTERLY': 'ارزش افزوده فصلی',
+    'ANNUAL_RETURN': 'اظهارنامه سالانه',
+    'PAYROLL_TAX': 'مالیات حقوق',
+    'SOCIAL_SECURITY': 'بیمه تامین اجتماعی',
+    'MOUDIAN': 'سامانه مودیان',
+    'AUDIT': 'حسابرسی',
+    'OTHER': 'سایر',
+}
+TAX_DEADLINE_STATUS = {
+    'PENDING': {'label': 'در انتظار', 'color': '#f59e0b', 'bg': '#fef3c7'},
+    'FILED': {'label': 'ارسال شد', 'color': '#3b82f6', 'bg': '#dbeafe'},
+    'PAID': {'label': 'تسویه شد', 'color': '#10b981', 'bg': '#d1fae5'},
+    'OVERDUE': {'label': 'سررسید گذشته', 'color': '#ef4444', 'bg': '#fee2e2'},
+    'CANCELLED': {'label': 'لغو شد', 'color': '#94a3b8', 'bg': '#f1f5f9'},
+}
+
+class TaxDeadlineCreateModel(BaseModel):
+    company_id: str
+    deadline_type: str = "OTHER"
+    title: str
+    due_date: str
+    period_label: str = ""
+    amount: float | None = None
+    notes: str = ""
+    assigned_user_id: str | None = None
+
+class TaxDeadlineUpdateModel(BaseModel):
+    title: str | None = None
+    deadline_type: str | None = None
+    due_date: str | None = None
+    period_label: str | None = None
+    amount: float | None = None
+    status: str | None = None
+    notes: str | None = None
+    assigned_user_id: str | None = None
+
+@app.get("/api/tax-deadlines")
+def list_tax_deadlines(request: Request, company_id: str = "", status: str = "", upcoming: int = 0):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        sql = """SELECT td.*, c.name AS company_name, u.name AS assigned_user_name
+                 FROM tax_deadlines td
+                 LEFT JOIN companies c ON c.id=td.company_id
+                 LEFT JOIN users u ON u.id=td.assigned_user_id
+                 WHERE 1=1"""
+        params = []
+        if company_id:
+            sql += " AND td.company_id=?"
+            params.append(company_id)
+        if status:
+            sql += " AND td.status=?"
+            params.append(status)
+        if upcoming == 1:
+            today = now()[:10]
+            sql += " AND td.due_date >= ? AND td.status='PENDING' ORDER BY td.due_date ASC"
+            params.append(today)
+        else:
+            sql += " ORDER BY td.due_date DESC, td.created_at DESC"
+        rows = con.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+@app.post("/api/tax-deadlines")
+def create_tax_deadline(payload: TaxDeadlineCreateModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    tid = uid()
+    ts = now()
+    with db() as con:
+        con.execute("""INSERT INTO tax_deadlines
+            (id, company_id, deadline_type, title, due_date, period_label, amount, status, notes, assigned_user_id, created_by, created_at, updated_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (tid, payload.company_id, payload.deadline_type, payload.title, payload.due_date,
+             payload.period_label, payload.amount, 'PENDING', payload.notes, payload.assigned_user_id,
+             user["id"], ts, ts))
+    return {"id": tid}
+
+@app.patch("/api/tax-deadlines/{deadline_id}")
+def update_tax_deadline(deadline_id: str, payload: TaxDeadlineUpdateModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    with db() as con:
+        existing = con.execute("SELECT * FROM tax_deadlines WHERE id=?", (deadline_id,)).fetchone()
+        if not existing: raise HTTPException(404, "سررسید پیدا نشد")
+        updates = []
+        params = []
+        for k, v in payload.model_dump(exclude_unset=True).items():
+            if v is None: continue
+            updates.append(f"{k}=?")
+            params.append(v)
+        if payload.status in ('FILED', 'PAID') and not existing["completed_at"]:
+            updates.append("completed_at=?")
+            params.append(now())
+            updates.append("completed_by=?")
+            params.append(user["id"])
+        if not updates: return {"ok": True, "updated": 0}
+        updates.append("updated_at=?")
+        params.append(now())
+        params.append(deadline_id)
+        con.execute(f"UPDATE tax_deadlines SET {', '.join(updates)} WHERE id=?", params)
+    return {"ok": True, "updated": len(updates)-1}
+
+@app.delete("/api/tax-deadlines/{deadline_id}")
+def delete_tax_deadline(deadline_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    with db() as con:
+        con.execute("DELETE FROM tax_deadlines WHERE id=?", (deadline_id,))
+    return {"ok": True}
+
+@app.get("/api/tax-deadlines/types")
+def list_tax_deadline_types(request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    return {"types": TAX_DEADLINE_TYPES, "statuses": TAX_DEADLINE_STATUS}
+
+
+# ========================================================================
+# PHASE 1: COMPANY STAFF API (تخصیص کارمند به شرکت)
+# ========================================================================
+STAFF_ROLES = {
+    'lead': 'سرپرست',
+    'accountant': 'حسابدار',
+    'assistant': 'کمک‌حسابدار',
+}
+
+class CompanyStaffModel(BaseModel):
+    company_id: str
+    user_id: str
+    role: str = "accountant"
+    notes: str = ""
+
+@app.get("/api/companies/{company_id}/staff")
+def list_company_staff(company_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        rows = con.execute("""SELECT cs.*, u.name AS user_name, u.role AS user_role, u.first_name, u.last_name
+                              FROM company_staff cs JOIN users u ON u.id=cs.user_id
+                              WHERE cs.company_id=? ORDER BY cs.assigned_at DESC""", (company_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+@app.post("/api/companies/{company_id}/staff")
+def assign_company_staff(company_id: str, payload: CompanyStaffModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    sid = uid()
+    with db() as con:
+        try:
+            con.execute("INSERT INTO company_staff VALUES(?,?,?,?,?,?,?,?)",
+                        (sid, company_id, payload.user_id, payload.role, now(), user["id"], 1, payload.notes))
+        except Exception as e:
+            if "UNIQUE" in str(e): raise HTTPException(400, "این کاربر قبلاً به این شرکت تخصیص داده شده")
+            raise
+    return {"id": sid}
+
+@app.delete("/api/companies/{company_id}/staff/{staff_id}")
+def unassign_company_staff(company_id: str, staff_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    with db() as con:
+        con.execute("DELETE FROM company_staff WHERE id=? AND company_id=?", (staff_id, company_id))
+    return {"ok": True}
+
+@app.get("/api/users/{user_id}/companies-assigned")
+def list_user_assigned_companies(user_id: str, request: Request):
+    """Returns companies assigned to a specific user."""
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        rows = con.execute("""SELECT cs.*, c.name AS company_name, c.code AS company_code
+                              FROM company_staff cs JOIN companies c ON c.id=cs.company_id
+                              WHERE cs.user_id=? AND cs.active=1""", (user_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+
+# ========================================================================
+# PHASE 1: FEE MODULE API (ماژول Fee و مطالبات)
+# ========================================================================
+FEE_TYPES = {
+    'monthly': 'ماهانه',
+    'quarterly': 'فصلی',
+    'annual': 'سالانه',
+    'hourly': 'ساعتی',
+    'one_time': 'یک‌باره',
+}
+FEE_STATUS = {
+    'UNPAID': {'label': 'پرداخت‌نشده', 'color': '#ef4444', 'bg': '#fee2e2'},
+    'PARTIAL': {'label': 'پرداخت جزئی', 'color': '#f59e0b', 'bg': '#fef3c7'},
+    'PAID': {'label': 'تسویه شد', 'color': '#10b981', 'bg': '#d1fae5'},
+    'OVERDUE': {'label': 'سررسید گذشته', 'color': '#dc2626', 'bg': '#fee2e2'},
+    'CANCELLED': {'label': 'لغو شد', 'color': '#94a3b8', 'bg': '#f1f5f9'},
+}
+
+class FeeCreateModel(BaseModel):
+    company_id: str
+    contract_id: str | None = None
+    title: str
+    fee_type: str = "monthly"
+    amount: float = 0
+    currency: str = "IRR"
+    period_start: str | None = None
+    period_end: str | None = None
+    issue_date: str
+    due_date: str | None = None
+    notes: str = ""
+
+class FeeUpdateModel(BaseModel):
+    title: str | None = None
+    fee_type: str | None = None
+    amount: float | None = None
+    currency: str | None = None
+    period_start: str | None = None
+    period_end: str | None = None
+    due_date: str | None = None
+    status: str | None = None
+    paid_amount: float | None = None
+    paid_date: str | None = None
+    notes: str | None = None
+
+@app.get("/api/fees")
+def list_fees(request: Request, company_id: str = "", status: str = ""):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        sql = """SELECT f.*, c.name AS company_name
+                 FROM fees f LEFT JOIN companies c ON c.id=f.company_id WHERE 1=1"""
+        params = []
+        if company_id:
+            sql += " AND f.company_id=?"
+            params.append(company_id)
+        if status:
+            sql += " AND f.status=?"
+            params.append(status)
+        sql += " ORDER BY f.issue_date DESC, f.created_at DESC"
+        rows = con.execute(sql, params).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["balance"] = float(d["amount"]) - float(d["paid_amount"])
+            result.append(d)
+        return result
+
+@app.post("/api/fees")
+def create_fee(payload: FeeCreateModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    fid = uid()
+    ts = now()
+    with db() as con:
+        con.execute("""INSERT INTO fees
+            (id, company_id, contract_id, title, fee_type, amount, currency, period_start, period_end,
+             issue_date, due_date, status, paid_amount, paid_date, notes, created_by, created_at, updated_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (fid, payload.company_id, payload.contract_id, payload.title, payload.fee_type,
+             payload.amount, payload.currency, payload.period_start, payload.period_end,
+             payload.issue_date, payload.due_date, 'UNPAID', 0, None, payload.notes,
+             user["id"], ts, ts))
+    return {"id": fid}
+
+@app.patch("/api/fees/{fee_id}")
+def update_fee(fee_id: str, payload: FeeUpdateModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    with db() as con:
+        existing = con.execute("SELECT * FROM fees WHERE id=?", (fee_id,)).fetchone()
+        if not existing: raise HTTPException(404, "fee پیدا نشد")
+        updates = []
+        params = []
+        for k, v in payload.model_dump(exclude_unset=True).items():
+            if v is None: continue
+            updates.append(f"{k}=?")
+            params.append(v)
+        if payload.paid_amount is not None and payload.status is None:
+            new_paid = float(payload.paid_amount)
+            new_total = float(existing["amount"]) if payload.amount is None else float(payload.amount)
+            if new_paid >= new_total and new_total > 0:
+                updates.append("status=?")
+                params.append("PAID")
+            elif new_paid > 0:
+                updates.append("status=?")
+                params.append("PARTIAL")
+        if not updates: return {"ok": True, "updated": 0}
+        updates.append("updated_at=?")
+        params.append(now())
+        params.append(fee_id)
+        con.execute(f"UPDATE fees SET {', '.join(updates)} WHERE id=?", params)
+    return {"ok": True, "updated": len(updates)-1}
+
+@app.delete("/api/fees/{fee_id}")
+def delete_fee(fee_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    with db() as con:
+        con.execute("DELETE FROM fees WHERE id=?", (fee_id,))
+    return {"ok": True}
+
+@app.get("/api/fees/summary")
+def fees_summary(request: Request):
+    """Summary of all fees — total, paid, outstanding."""
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        total = con.execute("SELECT COALESCE(SUM(amount),0) FROM fees WHERE status!='CANCELLED'").fetchone()[0]
+        paid = con.execute("SELECT COALESCE(SUM(paid_amount),0) FROM fees WHERE status!='CANCELLED'").fetchone()[0]
+        outstanding = float(total) - float(paid)
+        count_unpaid = con.execute("SELECT COUNT(*) FROM fees WHERE status IN ('UNPAID','PARTIAL','OVERDUE')").fetchone()[0]
+        count_overdue = con.execute("SELECT COUNT(*) FROM fees WHERE status='OVERDUE'").fetchone()[0]
+        return {
+            "total_amount": float(total),
+            "paid_amount": float(paid),
+            "outstanding": outstanding,
+            "count_unpaid": count_unpaid,
+            "count_overdue": count_overdue,
+        }
+
+
+# ========================================================================
+# PHASE 1: MOUDIAN SYSTEM API (سامانه مودیان — فاکتور الکترونیکی)
+# ========================================================================
+MOUDIAN_STATUS = {
+    'DRAFT': {'label': 'پیش‌نویس', 'color': '#94a3b8', 'bg': '#f1f5f9'},
+    'PENDING': {'label': 'در انتظار', 'color': '#f59e0b', 'bg': '#fef3c7'},
+    'SENT': {'label': 'ارسال شد', 'color': '#3b82f6', 'bg': '#dbeafe'},
+    'ACCEPTED': {'label': 'تأیید شد', 'color': '#10b981', 'bg': '#d1fae5'},
+    'REJECTED': {'label': 'رد شد', 'color': '#ef4444', 'bg': '#fee2e2'},
+    'CANCELLED': {'label': 'ابطال شد', 'color': '#94a3b8', 'bg': '#f1f5f9'},
+}
+
+class MoudianInvoiceCreateModel(BaseModel):
+    company_id: str
+    invoice_number: str = ""
+    invoice_type: str = "SALES"
+    buyer_tin: str = ""
+    buyer_name: str = ""
+    issue_date: str
+    items: list[dict] = []
+    discount_amount: float = 0
+    notes: str = ""
+
+@app.get("/api/moudian/invoices")
+def list_moudian_invoices(request: Request, company_id: str = "", status: str = ""):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        sql = """SELECT mi.*, c.name AS company_name
+                 FROM moudian_invoices mi LEFT JOIN companies c ON c.id=mi.company_id WHERE 1=1"""
+        params = []
+        if company_id:
+            sql += " AND mi.company_id=?"
+            params.append(company_id)
+        if status:
+            sql += " AND mi.status=?"
+            params.append(status)
+        sql += " ORDER BY mi.issue_date DESC, mi.created_at DESC"
+        rows = con.execute(sql, params).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            try:
+                d["items"] = json.loads(r["items_json"]) if r["items_json"] else []
+            except Exception:
+                d["items"] = []
+            del d["items_json"]
+            result.append(d)
+        return result
+
+@app.post("/api/moudian/invoices")
+def create_moudian_invoice(payload: MoudianInvoiceCreateModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    mid = uid()
+    ts = now()
+    items_json = json.dumps(payload.items, ensure_ascii=False) if payload.items else "[]"
+    # Auto-calculate amounts
+    total = sum(float(i.get("amount", 0)) for i in payload.items if isinstance(i, dict))
+    tax = round(total * 0.09)  # 9% VAT
+    payable = total + tax - float(payload.discount_amount or 0)
+    with db() as con:
+        # Get seller info from company
+        company = con.execute("SELECT * FROM companies WHERE id=?", (payload.company_id,)).fetchone()
+        seller_tin = company["national_id"] if company else ""
+        seller_name = company["name"] if company else ""
+        con.execute("""INSERT INTO moudian_invoices
+            (id, company_id, invoice_number, invoice_type, buyer_tin, buyer_name, seller_tin, seller_name,
+             issue_date, total_amount, tax_amount, discount_amount, payable_amount, items_json,
+             status, reference_id, submitted_at, error_message, created_by, created_at, updated_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (mid, payload.company_id, payload.invoice_number, payload.invoice_type,
+             payload.buyer_tin, payload.buyer_name, seller_tin, seller_name,
+             payload.issue_date, total, tax, float(payload.discount_amount or 0), payable,
+             items_json, 'DRAFT', None, None, "", user["id"], ts, ts))
+    return {"id": mid, "total": total, "tax": tax, "payable": payable}
+
+@app.patch("/api/moudian/invoices/{invoice_id}")
+def update_moudian_invoice(invoice_id: str, request: Request, status: str = "", reference_id: str = "", error_message: str = ""):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    with db() as con:
+        existing = con.execute("SELECT * FROM moudian_invoices WHERE id=?", (invoice_id,)).fetchone()
+        if not existing: raise HTTPException(404, "فاکتور مودیان پیدا نشد")
+        updates = []
+        params = []
+        if status:
+            updates.append("status=?")
+            params.append(status)
+            if status == 'SENT' and not existing["submitted_at"]:
+                updates.append("submitted_at=?")
+                params.append(now())
+        if reference_id:
+            updates.append("reference_id=?")
+            params.append(reference_id)
+        if error_message:
+            updates.append("error_message=?")
+            params.append(error_message)
+        if not updates: return {"ok": True}
+        updates.append("updated_at=?")
+        params.append(now())
+        params.append(invoice_id)
+        con.execute(f"UPDATE moudian_invoices SET {', '.join(updates)} WHERE id=?", params)
+    return {"ok": True}
+
+@app.post("/api/moudian/invoices/{invoice_id}/submit")
+def submit_moudian_invoice(invoice_id: str, request: Request):
+    """Submit invoice to Moudian system (mock for now — returns reference_id)."""
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    with db() as con:
+        existing = con.execute("SELECT * FROM moudian_invoices WHERE id=?", (invoice_id,)).fetchone()
+        if not existing: raise HTTPException(404, "فاکتور مودیان پیدا نشد")
+        if existing["status"] not in ('DRAFT', 'REJECTED'):
+            raise HTTPException(400, "فقط فاکتورهای پیش‌نویس یا ردشده قابل ارسال هستند")
+        # Mock submission — in real implementation, this would call the Moudian API
+        ref_id = f"MOU-{uid()[:12].upper()}"
+        con.execute("UPDATE moudian_invoices SET status='SENT', reference_id=?, submitted_at=?, updated_at=? WHERE id=?",
+                    (ref_id, now(), now(), invoice_id))
+    return {"ok": True, "reference_id": ref_id, "status": "SENT"}
+
+@app.delete("/api/moudian/invoices/{invoice_id}")
+def delete_moudian_invoice(invoice_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    with db() as con:
+        con.execute("DELETE FROM moudian_invoices WHERE id=?", (invoice_id,))
+    return {"ok": True}
+

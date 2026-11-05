@@ -1,5 +1,5 @@
-// YFG Service Worker v19 — version 0.3.0.06 — system update + backup/restore
-const CACHE='yfg-desk-v19';
+// YFG Service Worker v20 — version 0.3.0.07 — Phase 1: tax deadlines + staff + fees + moudian
+const CACHE='yfg-desk-v20';
 const ASSETS=['/','/static/style.css','/static/themes.css','/static/app.js','/static/performance.js','/static/enhanced.js','/static/themes.js','/static/icon.svg','/static/icon-192.png','/static/icon-512.png','/manifest.webmanifest'];
 
 self.addEventListener('install', e => e.waitUntil(

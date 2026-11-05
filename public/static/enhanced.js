@@ -1061,6 +1061,8 @@
     {key:'contracts', label:'قراردادها', icon:'📜'},
     {key:'proforma', label:'پیش فاکتور', icon:'🧾'},
     {key:'invoices', label:'فاکتورها', icon:'💳'},
+    {key:'fees', label:'مطالبات (Fee)', icon:'💰'},
+    {key:'moudian', label:'سامانه مودیان', icon:'🔗'},
   ];
 
   async function renderCustomers() {
@@ -1111,6 +1113,8 @@
       else if (customersTab === 'contracts') await renderContractsList(content, isAdmin);
       else if (customersTab === 'proforma') await renderProformasList(content, isAdmin);
       else if (customersTab === 'invoices') await renderInvoicesList(content, isAdmin);
+      else if (customersTab === 'fees') await renderFeesList(content, isAdmin);
+      else if (customersTab === 'moudian') await renderMoudianList(content, isAdmin);
       else content.innerHTML = `<div class="empty-state" style="text-align:center;padding:40px 20px;color:#94a3b8;">
         <div style="font-size:48px;margin-bottom:12px;">🚧</div>
         <h3 style="margin:0 0 8px;">این بخش به‌زودی فعال خواهد شد</h3>
@@ -1995,6 +1999,314 @@
   }
 
 
+  // ============ PHASE 1: TAX DEADLINES (تقویم مالیاتی) ============
+  async function renderTaxDeadlines(container) {
+    if (!container) return;
+    try {
+      const [deadlines, companies, types] = await Promise.all([
+        api('/tax-deadlines'),
+        api('/companies').catch(()=>[]),
+        api('/tax-deadlines/types').catch(()=>({})),
+      ]);
+      const canManage = state.me?.role === 'ADMIN' || state.me?.role === 'CEO';
+      const typeLabels = (types?.types) || {};
+      const statusInfo = (types?.statuses) || {};
+      const today = new Date().toISOString().slice(0,10);
+      const rows = (deadlines||[]).map(d => {
+        const isOverdue = d.due_date < today && d.status === 'PENDING';
+        const st = statusInfo[d.status] || {};
+        return `<tr>
+          <td><span style="background:${st.bg||'#f1f5f9'};color:${st.color||'#64748b'};padding:2px 10px;border-radius:999px;font-size:11px;">${st.label||d.status}</span>${isOverdue?' ⚠':''}</td>
+          <td><strong>${esc(d.title)}</strong>${d.period_label?`<div style="font-size:11px;color:#64748b;">${esc(d.period_label)}</div>`:''}</td>
+          <td style="font-size:12px;">${typeLabels[d.deadline_type]||d.deadline_type}</td>
+          <td>${esc(d.company_name||'عمومی')}</td>
+          <td style="font-size:12px;">${d.due_date}<div style="font-size:10px;color:${d.due_date<today?'#ef4444':'#64748b'};">${d.due_date<today?'سررسید گذشته':'در آینده'}</div></td>
+          <td style="font-size:12px;">${d.amount?num(Math.round(d.amount))+' ریال':'—'}</td>
+          <td style="font-size:12px;">${esc(d.assigned_user_name||'—')}</td>
+          <td>
+            ${canManage ? `<button class="btn soft small" onclick="window.__editDeadline('${d.id}')">✎</button>` : ''}
+            <button class="btn small" style="background:#d1fae5;color:#065f46;" onclick="window.__completeDeadline('${d.id}','${esc(d.status)}')">✓</button>
+            ${canManage ? `<button class="btn small" style="background:#fee2e2;color:#991b1b;" onclick="window.__deleteDeadline('${d.id}')">✗</button>` : ''}
+          </td>
+        </tr>`;
+      }).join('');
+      container.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+          <div><h3 style="margin:0;">📅 تقویم سررسیدهای مالیاتی (${(deadlines||[]).length})</h3>
+          <p class="hint" style="margin-top:2px;">پیگیری سررسیدهای مالیاتی: ارزش افزوده فصلی، اظهارنامه سالانه، بیمه تامین اجتماعی</p></div>
+          ${canManage ? '<button class="btn primary small" onclick="window.__newDeadline()">＋ سررسید جدید</button>' : ''}
+        </div>
+        <div class="table-card" style="overflow-x:auto;">
+          <table class="data-table">
+            <thead><tr><th>وضعیت</th><th>عنوان</th><th>نوع</th><th>شرکت</th><th>سررسید</th><th>مبلغ</th><th>مسئول</th><th>عملیات</th></tr></thead>
+            <tbody>${rows || '<tr><td colspan="8" style="text-align:center;padding:20px;color:#64748b;">سررسیدی ثبت نشده</td></tr>'}</tbody>
+          </table>
+        </div>`;
+      window.__newDeadline = () => openDeadlineForm(null, companies, typeLabels, () => renderReports());
+      window.__editDeadline = (id) => openDeadlineForm(id, companies, typeLabels, () => renderReports());
+      window.__deleteDeadline = async (id) => {
+        if (!confirm('حذف این سررسید؟')) return;
+        try { await api(`/tax-deadlines/${id}`, {method:'DELETE'}); toast('حذف شد'); renderReports(); } catch(e) { toast(e.message, true); }
+      };
+      window.__completeDeadline = async (id, status) => {
+        const newStatus = status === 'PENDING' ? 'FILED' : 'PAID';
+        try { await api(`/tax-deadlines/${id}`, {method:'PATCH', body:JSON.stringify({status:newStatus})}); toast('وضعیت به‌روز شد'); renderReports(); } catch(e) { toast(e.message, true); }
+      };
+    } catch(e) { container.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
+  }
+
+  function openDeadlineForm(id, companies, typeLabels, onDone) {
+    (async () => {
+      let d = null;
+      if (id) d = (await api('/tax-deadlines')).find(x => x.id === id);
+      const companyOpts = (companies||[]).map(c=>`<option value="${c.id}" ${d&&d.company_id===c.id?'selected':''}>${esc(c.name)}</option>`).join('');
+      const typeOpts = Object.entries(typeLabels).map(([k,v])=>`<option value="${k}" ${d&&d.deadline_type===k?'selected':''}>${v}</option>`).join('');
+      const body = `<form id="deadlineForm" style="display:grid;gap:12px;">
+        <div class="form-grid">
+          <label>عنوان <span style="color:#ef4444;">*</span><input class="field" name="title" required value="${d?esc(d.title):''}" placeholder="ارزش افزوده زمستان ۱۴۰۳"></label>
+          <label>شرکت <span style="color:#ef4444;">*</span><select class="field" name="company_id" required><option value="">— انتخاب —</option>${companyOpts}</select></label>
+        </div>
+        <div class="form-grid">
+          <label>نوع<select class="field" name="deadline_type">${typeOpts}</select></label>
+          <label>سررسید <span style="color:#ef4444;">*</span><input class="field" type="date" name="due_date" required value="${d?d.due_date:''}"></label>
+          <label>دوره<input class="field" name="period_label" value="${d?esc(d.period_label||''):''}" placeholder="زمستان ۱۴۰۳"></label>
+        </div>
+        <label>مبلغ (ریال)<input class="field" type="number" name="amount" value="${d?d.amount||'':''}" min="0"></label>
+        <label>یادداشت<textarea class="field" name="notes" rows="2">${d?esc(d.notes||''):''}</textarea></label>
+        <div style="display:flex;justify-content:flex-end;gap:8px;"><button type="button" class="btn soft" onclick="document.getElementById('modalRoot').innerHTML=''">انصراف</button><button type="submit" class="btn primary">${id?'ذخیره':'ایجاد'}</button></div>
+      </form>`;
+      modal(id?'✎ ویرایش سررسید':'＋ سررسید جدید', 'تقویم سررسیدهای مالیاتی', body);
+      document.getElementById('deadlineForm').addEventListener('submit', async e => {
+        e.preventDefault();
+        const fd = new FormData(e.currentTarget);
+        const payload = {title:fd.get('title').trim(), company_id:fd.get('company_id'), deadline_type:fd.get('deadline_type'), due_date:fd.get('due_date'), period_label:fd.get('period_label').trim(), amount:fd.get('amount')?parseFloat(fd.get('amount')):null, notes:fd.get('notes').trim()};
+        try {
+          if (id) await api(`/tax-deadlines/${id}`, {method:'PATCH', body:JSON.stringify(payload)});
+          else await api('/tax-deadlines', {method:'POST', body:JSON.stringify(payload)});
+          document.getElementById('modalRoot').innerHTML = '';
+          toast(id?'ذخیره شد':'سررسید ایجاد شد');
+          onDone();
+        } catch(err) { toast(err.message, true); }
+      });
+    })();
+  }
+
+  // ============ PHASE 1: FEES (مطالبات و Fee) ============
+  async function renderFeesList(content, isAdmin) {
+    if (!content) return;
+    try {
+      const [fees, companies, summary] = await Promise.all([
+        api('/fees'),
+        api('/companies').catch(()=>[]),
+        api('/fees/summary').catch(()=>({})),
+      ]);
+      const canManage = isAdmin;
+      const rows = (fees||[]).map(f => {
+        const balance = f.balance ?? (f.amount - f.paid_amount);
+        return `<tr>
+          <td><strong>${esc(f.title)}</strong></td>
+          <td>${esc(f.company_name||'—')}</td>
+          <td style="font-size:12px;">${({monthly:'ماهانه',quarterly:'فصلی',annual:'سالانه',hourly:'ساعتی',one_time:'یک‌باره'}[f.fee_type])||f.fee_type}</td>
+          <td style="font-size:12px;">${num(Math.round(f.amount))} ریال</td>
+          <td style="font-size:12px;color:${f.paid_amount>0?'#10b981':'#94a3b8'};">${f.paid_amount>0?num(Math.round(f.paid_amount)):'—'}</td>
+          <td style="font-size:12px;color:${balance>0?'#ef4444':'#10b981'};">${num(Math.round(balance))}</td>
+          <td style="font-size:12px;">${f.issue_date}${f.due_date?` / ${f.due_date}`:''}</td>
+          <td>${({UNPAID:'<span style="color:#ef4444;">پرداخت‌نشده</span>',PARTIAL:'<span style="color:#f59e0b;">جزئی</span>',PAID:'<span style="color:#10b981;">تسویه</span>',OVERDUE:'<span style="color:#dc2626;">سررسید گذشته</span>',CANCELLED:'<span style="color:#94a3b8;">لغو</span>'}[f.status])||f.status}</td>
+          <td>
+            ${canManage ? `<button class="btn soft small" onclick="window.__feeForm('${f.id}')">✎</button>` : ''}
+            ${canManage && f.status!=='PAID' ? `<button class="btn small" style="background:#d1fae5;color:#065f46;" onclick="window.__feePay('${f.id}',${f.amount},${f.paid_amount||0})">💰</button>` : ''}
+            ${canManage ? `<button class="btn small" style="background:#fee2e2;color:#991b1b;" onclick="window.__feeDelete('${f.id}')">✗</button>` : ''}
+          </td>
+        </tr>`;
+      }).join('');
+      content.innerHTML = `
+        ${summary ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:16px;">
+          <div style="background:#f0fdfa;padding:12px;border-radius:8px;text-align:center;"><div style="font-size:11px;color:#64748b;">کل مطالبات</div><div style="font-size:18px;font-weight:700;color:#0b8f89;">${num(Math.round(summary.total_amount||0))}</div><div style="font-size:10px;">ریال</div></div>
+          <div style="background:#d1fae5;padding:12px;border-radius:8px;text-align:center;"><div style="font-size:11px;color:#64748b;">دریافت‌شده</div><div style="font-size:18px;font-weight:700;color:#065f46;">${num(Math.round(summary.paid_amount||0))}</div><div style="font-size:10px;">ریال</div></div>
+          <div style="background:#fee2e2;padding:12px;border-radius:8px;text-align:center;"><div style="font-size:11px;color:#64748b;">مانده</div><div style="font-size:18px;font-weight:700;color:#ef4444;">${num(Math.round(summary.outstanding||0))}</div><div style="font-size:10px;">ریال</div></div>
+          <div style="background:#fef3c7;padding:12px;border-radius:8px;text-align:center;"><div style="font-size:11px;color:#64748b;">تعداد پرداخت‌نشده</div><div style="font-size:18px;font-weight:700;color:#92400e;">${summary.count_unpaid||0}</div></div>
+        </div>` : ''}
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+          <div><h3 style="margin:0;">💰 مطالبات و Fee (${(fees||[]).length})</h3><p class="hint" style="margin-top:2px;">پیگیری مطالبات دفتر از مشتریان</p></div>
+          ${canManage ? '<button class="btn primary small" onclick="window.__feeForm()">＋ مطالبات جدید</button>' : ''}
+        </div>
+        <div class="table-card" style="overflow-x:auto;">
+          <table class="data-table">
+            <thead><tr><th>عنوان</th><th>شرکت</th><th>نوع</th><th>مبلغ</th><th>پرداخت‌شده</th><th>مانده</th><th>تاریخ</th><th>وضعیت</th><th>عملیات</th></tr></thead>
+            <tbody>${rows || '<tr><td colspan="9" style="text-align:center;padding:20px;color:#64748b;">مطالباتی ثبت نشده</td></tr>'}</tbody>
+          </table>
+        </div>`;
+      window.__feeForm = (id) => openFeeForm(id, companies, () => renderCustomers());
+      window.__feePay = async (id, total, paid) => {
+        const remaining = total - paid;
+        const amt = prompt(`مبلغ پرداخت (مانده: ${num(remaining)} ریال)`, String(remaining));
+        if (!amt) return;
+        const p = parseFloat(amt);
+        if (isNaN(p)||p<=0) return toast('مبلغ نامعتبر', true);
+        try { await api(`/fees/${id}`, {method:'PATCH', body:JSON.stringify({paid_amount:paid+p})}); toast(p>=remaining?'تسویه شد':'پرداخت جزئی ثبت شد'); renderCustomers(); } catch(e) { toast(e.message, true); }
+      };
+      window.__feeDelete = async (id) => {
+        if (!confirm('حذف این مطالبات؟')) return;
+        try { await api(`/fees/${id}`, {method:'DELETE'}); toast('حذف شد'); renderCustomers(); } catch(e) { toast(e.message, true); }
+      };
+    } catch(e) { content.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
+  }
+
+  function openFeeForm(id, companies, onDone) {
+    (async () => {
+      let f = null;
+      if (id) f = (await api('/fees')).find(x => x.id === id);
+      const companyOpts = (companies||[]).map(c=>`<option value="${c.id}" ${f&&f.company_id===c.id?'selected':''}>${esc(c.name)}</option>`).join('');
+      const body = `<form id="feeForm" style="display:grid;gap:12px;">
+        <div class="form-grid">
+          <label>عنوان <span style="color:#ef4444;">*</span><input class="field" name="title" required value="${f?esc(f.title):''}" placeholder="حق‌الزحمه حسابداری فروردین"></label>
+          <label>شرکت <span style="color:#ef4444;">*</span><select class="field" name="company_id" required><option value="">— انتخاب —</option>${companyOpts}</select></label>
+        </div>
+        <div class="form-grid">
+          <label>نوع<select class="field" name="fee_type"><option value="monthly" ${f&&f.fee_type==='monthly'?'selected':''}>ماهانه</option><option value="quarterly" ${f&&f.fee_type==='quarterly'?'selected':''}>فصلی</option><option value="annual" ${f&&f.fee_type==='annual'?'selected':''}>سالانه</option><option value="one_time" ${f&&f.fee_type==='one_time'?'selected':''}>یک‌باره</option></select></label>
+          <label>مبلغ (ریال)<input class="field" type="number" name="amount" value="${f?f.amount:0}" min="0"></label>
+        </div>
+        <div class="form-grid">
+          <label>تاریخ صدور <span style="color:#ef4444;">*</span><input class="field" type="date" name="issue_date" required value="${f?f.issue_date:''}"></label>
+          <label>سررسید<input class="field" type="date" name="due_date" value="${f?f.due_date||'':''}"></label>
+        </div>
+        <label>یادداشت<textarea class="field" name="notes" rows="2">${f?esc(f.notes||''):''}</textarea></label>
+        <div style="display:flex;justify-content:flex-end;gap:8px;"><button type="button" class="btn soft" onclick="document.getElementById('modalRoot').innerHTML=''">انصراف</button><button type="submit" class="btn primary">${id?'ذخیره':'ایجاد'}</button></div>
+      </form>`;
+      modal(id?'✎ ویرایش مطالبات':'＋ مطالبات جدید', 'ماژول Fee و مطالبات', body);
+      document.getElementById('feeForm').addEventListener('submit', async e => {
+        e.preventDefault();
+        const fd = new FormData(e.currentTarget);
+        const payload = {title:fd.get('title').trim(), company_id:fd.get('company_id'), fee_type:fd.get('fee_type'), amount:parseFloat(fd.get('amount')||0), issue_date:fd.get('issue_date'), due_date:fd.get('due_date')||null, notes:fd.get('notes').trim()};
+        try {
+          if (id) await api(`/fees/${id}`, {method:'PATCH', body:JSON.stringify(payload)});
+          else await api('/fees', {method:'POST', body:JSON.stringify(payload)});
+          document.getElementById('modalRoot').innerHTML = '';
+          toast(id?'ذخیره شد':'مطالبات ایجاد شد');
+          onDone();
+        } catch(err) { toast(err.message, true); }
+      });
+    })();
+  }
+
+  // ============ PHASE 1: MOUDIAN (سامانه مودیان) ============
+  async function renderMoudianList(content, isAdmin) {
+    if (!content) return;
+    try {
+      const [invoices, companies] = await Promise.all([
+        api('/moudian/invoices'),
+        api('/companies').catch(()=>[]),
+      ]);
+      const canManage = isAdmin;
+      const rows = (invoices||[]).map(m => {
+        return `<tr>
+          <td><code>${esc(m.invoice_number||'—')}</code>${m.reference_id?`<div style="font-size:10px;color:#64748b;">رهگیری: ${esc(m.reference_id)}</div>`:''}</td>
+          <td><strong>${esc(m.seller_name||'—')}</strong></td>
+          <td>${esc(m.buyer_name||'—')}</td>
+          <td style="font-size:12px;">${m.issue_date}</td>
+          <td style="font-size:12px;">${num(Math.round(m.total_amount))} ریال<br><span style="font-size:10px;color:#64748b;">مالیات: ${num(Math.round(m.tax_amount))}</span></td>
+          <td style="font-size:12px;font-weight:600;">${num(Math.round(m.payable_amount))} ریال</td>
+          <td>${({DRAFT:'<span style="color:#94a3b8;">پیش‌نویس</span>',PENDING:'<span style="color:#f59e0b;">در انتظار</span>',SENT:'<span style="color:#3b82f6;">ارسال شد</span>',ACCEPTED:'<span style="color:#10b981;">تأیید شد</span>',REJECTED:'<span style="color:#ef4444;">رد شد</span>',CANCELLED:'<span style="color:#94a3b8;">ابطال</span>'}[m.status])||m.status}</td>
+          <td>
+            ${canManage ? `<button class="btn soft small" onclick="window.__moudianForm('${m.id}')">✎</button>` : ''}
+            ${canManage && m.status==='DRAFT' ? `<button class="btn primary small" style="background:#0b8f89;" onclick="window.__moudianSubmit('${m.id}')">📤 ارسال به مودیان</button>` : ''}
+            ${canManage ? `<button class="btn small" style="background:#fee2e2;color:#991b1b;" onclick="window.__moudianDelete('${m.id}')">✗</button>` : ''}
+          </td>
+        </tr>`;
+      }).join('');
+      content.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+          <div><h3 style="margin:0;">🔗 سامانه مودیان — فاکتور الکترونیکی (${(invoices||[]).length})</h3>
+          <p class="hint" style="margin-top:2px;">صدور و ارسال فاکتور الکترونیکی به سامانه مودیان</p></div>
+          ${canManage ? '<button class="btn primary small" onclick="window.__moudianForm()">＋ فاکتور مودیان جدید</button>' : ''}
+        </div>
+        <div class="table-card" style="overflow-x:auto;">
+          <table class="data-table">
+            <thead><tr><th>شماره/رهگیری</th><th>فروشنده</th><th>خریدار</th><th>تاریخ</th><th>مبلغ/مالیات</th><th>قابل پرداخت</th><th>وضعیت</th><th>عملیات</th></tr></thead>
+            <tbody>${rows || '<tr><td colspan="8" style="text-align:center;padding:20px;color:#64748b;">فاکتور مودیانی ثبت نشده</td></tr>'}</tbody>
+          </table>
+        </div>
+        <p class="hint" style="margin-top:12px;font-size:11px;color:#94a3b8;">⚠ ارسال به سامانه مودیان فعلاً به‌صورت شبیه‌سازی انجام می‌شود. برای اتصال واقعی، کلید API سامانه مودیان نیاز است.</p>`;
+      window.__moudianForm = (id) => openMoudianForm(id, companies, () => renderCustomers());
+      window.__moudianSubmit = async (id) => {
+        if (!confirm('ارسال فاکتور به سامانه مودیان؟')) return;
+        try {
+          const r = await api(`/moudian/invoices/${id}/submit`, {method:'POST'});
+          toast(`ارسال شد — کد رهگیری: ${r.reference_id}`);
+          renderCustomers();
+        } catch(e) { toast(e.message, true); }
+      };
+      window.__moudianDelete = async (id) => {
+        if (!confirm('حذف فاکتور مودیان؟')) return;
+        try { await api(`/moudian/invoices/${id}`, {method:'DELETE'}); toast('حذف شد'); renderCustomers(); } catch(e) { toast(e.message, true); }
+      };
+    } catch(e) { content.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
+  }
+
+  function openMoudianForm(id, companies, onDone) {
+    (async () => {
+      let m = null;
+      if (id) m = (await api('/moudian/invoices')).find(x => x.id === id);
+      const companyOpts = (companies||[]).map(c=>`<option value="${c.id}" ${m&&m.company_id===c.id?'selected':''}>${esc(c.name)}</option>`).join('');
+      const itemsRows = (m?.items || [{}]).map((it, i) => `<div class="moudian-item-row" style="display:grid;grid-template-columns:1fr 120px 120px;gap:6px;">
+        <input class="field" name="item_desc" placeholder="شرح کالا/خدمت" value="${esc(it.description||'')}">
+        <input class="field" type="number" name="item_amount" placeholder="مبلغ" value="${it.amount||0}" min="0">
+        <button type="button" class="btn small" style="background:#fee2e2;color:#991b1b;height:36px;" onclick="this.parentElement.remove()">✕</button>
+      </div>`).join('');
+      const body = `<form id="moudianForm" style="display:grid;gap:12px;">
+        <div class="form-grid">
+          <label>شرکت فروشنده <span style="color:#ef4444;">*</span><select class="field" name="company_id" required><option value="">— انتخاب —</option>${companyOpts}</select></label>
+          <label>شماره فاکتور<input class="field" name="invoice_number" value="${m?esc(m.invoice_number||''):''}" placeholder="INV-001"></label>
+        </div>
+        <div class="form-grid">
+          <label>شناسه اقتصادی خریدار<input class="field" name="buyer_tin" value="${m?esc(m.buyer_tin||''):''}" placeholder="شناسه اقتصادی ۱۱ رقمی"></label>
+          <label>نام خریدار<input class="field" name="buyer_name" value="${m?esc(m.buyer_name||''):''}"></label>
+        </div>
+        <label>تاریخ صدور <span style="color:#ef4444;">*</span><input class="field" type="date" name="issue_date" required value="${m?m.issue_date:''}"></label>
+        <div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <strong>اقلام فاکتور</strong>
+            <button type="button" class="btn primary small" onclick="window.__addMoudianItem()">＋ افزودن قلم</button>
+          </div>
+          <div id="moudianItems" style="display:grid;gap:6px;">${itemsRows}</div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;"><button type="button" class="btn soft" onclick="document.getElementById('modalRoot').innerHTML=''">انصراف</button><button type="submit" class="btn primary">${id?'ذخیره':'ایجاد'}</button></div>
+      </form>`;
+      modal(id?'✎ ویرایش فاکتور مودیان':'＋ فاکتور مودیان جدید', 'صدور فاکتور الکترونیکی', body);
+      window.__addMoudianItem = () => {
+        const div = document.createElement('div');
+        div.className = 'moudian-item-row';
+        div.style.cssText = 'display:grid;grid-template-columns:1fr 120px 120px;gap:6px;';
+        div.innerHTML = `<input class="field" name="item_desc" placeholder="شرح کالا/خدمت"><input class="field" type="number" name="item_amount" placeholder="مبلغ" value="0" min="0"><button type="button" class="btn small" style="background:#fee2e2;color:#991b1b;height:36px;" onclick="this.parentElement.remove()">✕</button>`;
+        document.getElementById('moudianItems').appendChild(div);
+      };
+      document.getElementById('moudianForm').addEventListener('submit', async e => {
+        e.preventDefault();
+        const fd = new FormData(e.currentTarget);
+        const items = [];
+        document.querySelectorAll('.moudian-item-row').forEach(row => {
+          const desc = row.querySelector('[name="item_desc"]').value.trim();
+          const amt = parseFloat(row.querySelector('[name="item_amount"]').value) || 0;
+          if (desc && amt > 0) items.push({description: desc, amount: amt});
+        });
+        const payload = {company_id:fd.get('company_id'), invoice_number:fd.get('invoice_number').trim(), buyer_tin:fd.get('buyer_tin').trim(), buyer_name:fd.get('buyer_name').trim(), issue_date:fd.get('issue_date'), items};
+        try {
+          if (id) {
+            // For update, just re-create (simpler)
+            await api(`/moudian/invoices/${id}`, {method:'DELETE'});
+            const r = await api('/moudian/invoices', {method:'POST', body:JSON.stringify(payload)});
+          } else {
+            const r = await api('/moudian/invoices', {method:'POST', body:JSON.stringify(payload)});
+          }
+          document.getElementById('modalRoot').innerHTML = '';
+          toast(id?'ذخیره شد':`فاکتور ایجاد شد — مالیات: ${r.tax} ریال، قابل پرداخت: ${r.payable} ریال`);
+          onDone();
+        } catch(err) { toast(err.message, true); }
+      });
+    })();
+  }
+
+
   // ============ REPORTS HUB (تب گزارشات) ============
   // همه گزارش‌های مدیریتی: عملکرد تیم، عملکرد کارکنان، ممیزی و KPI
   let reportsTab = 'team';
@@ -2004,6 +2316,7 @@
     {key:'audit', label:'گزارش ممیزی', icon:'⌁'},
     {key:'kpi', label:'گزارش KPI', icon:'🎯'},
     {key:'time', label:'تایم ترکینگ', icon:'⏱'},
+    {key:'tax', label:'تقویم مالیاتی', icon:'📅'},
   ];
 
   // ============ Reports (گزارشات) ============
@@ -2026,6 +2339,7 @@
       else if (reportsTab === 'audit') await renderAuditReport(content);
       else if (reportsTab === 'kpi') await window.__renderKPIReport(content);
       else if (reportsTab === 'time') await window.__renderTimeTracking(content);
+      else if (reportsTab === 'tax') await renderTaxDeadlines(content);
     } catch(e) { content.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
   }
   window.__renderReports = renderReports;
