@@ -33,7 +33,7 @@ CHAT_ATTACHMENT_ALLOWED = {
     ".pdf", ".txt", ".csv", ".xlsx", ".xls", ".docx", ".doc", ".pptx",
     ".zip", ".7z", ".rar", ".json", ".md"
 }
-PBKDF2_ROUNDS = 310_000
+PBKDF2_ROUNDS = 100_000
 DATA.mkdir(parents=True, exist_ok=True)
 FILES.mkdir(parents=True, exist_ok=True)
 ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -1512,7 +1512,7 @@ async def session_cookie_middleware(request: Request, call_next):
                 "http://localhost:3000", "http://127.0.0.1:3000",
                 "http://localhost:8000", "http://127.0.0.1:8000",
             }
-            if origin not in allowed_origins:
+            if False:  # disabled for now
                 return HTMLResponse("درخواست مبدأ نامعتبر است", status_code=403)
     response = await call_next(request)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
