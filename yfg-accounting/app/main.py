@@ -158,7 +158,7 @@ CREATE TABLE IF NOT EXISTS request_types(
  --  {"name":"to_date","label":"تا تاریخ","type":"date","required":true,"depends":"leave_unit:روزانه"},
  --  {"name":"from_time","label":"از ساعت","type":"time","required":false,"depends":"leave_unit:ساعتی"},
  --  {"name":"to_time","label":"تا ساعت","type":"time","required":false,"depends":"leave_unit:ساعتی"},
- --  {"name":"requester","label":"نام درخواست‌کننده","type":"user_link","required":true},
+ --  {"name":"requester","label":"نام درخواستکننده","type":"user_link","required":true},
  --  {"name":"auto_duration","label":"مدت (محاسبه خودکار)","type":"duration","auto":true,"depends_on":["leave_unit","from_date","to_date","from_time","to_time"]},
  --  {"name":"body","label":"شرح","type":"textarea","required":false}]
  fields_json TEXT NOT NULL DEFAULT '[]',
@@ -271,7 +271,7 @@ CREATE TABLE IF NOT EXISTS proformas(
  person_id TEXT REFERENCES persons(id),
  contract_id TEXT REFERENCES contracts(id),  -- optional link to a contract
  issue_date TEXT NOT NULL,
- valid_until TEXT,  -- تاریخ انقضا پیش‌فاکتور
+ valid_until TEXT,  -- تاریخ انقضا پیشفاکتور
  status TEXT NOT NULL DEFAULT 'DRAFT',  -- DRAFT / IN_PROGRESS / SENT / ACCEPTED / REJECTED / EXPIRED
  total_amount REAL NOT NULL DEFAULT 0,
  currency TEXT NOT NULL DEFAULT 'IRR',
@@ -439,14 +439,14 @@ CREATE TABLE IF NOT EXISTS kpis(
 );
 
 -- Seed default KPIs
-INSERT OR IGNORE INTO kpis VALUES('kpi1','کیفیت کار','quality','نمره میانگین کیفیت ارائه‌ها (۰ تا ۱۰۰)',90,'>=','%','40','monthly','EMPLOYEE','AVG(performance_scores_v2.score) * 1.0',1,datetime('now'),datetime('now'));
-INSERT OR IGNORE INTO kpis VALUES('kpi2','تحویل به‌موقع','ontime','درصد تسک‌های تحویلی در مهلت',85,'>=','%','25','monthly','EMPLOYEE','COUNT(tasks WHERE completed_at<=due_date)/COUNT(tasks)*100',1,datetime('now'),datetime('now'));
-INSERT OR IGNORE INTO kpis VALUES('kpi3','حجم کار','volume','مجموع دقیقه‌ی کار ثبت‌شده در ماه',1200,'>=','دقیقه','15','monthly','EMPLOYEE','SUM(performance_entries.duration_minutes)',1,datetime('now'),datetime('now'));
-INSERT OR IGNORE INTO kpis VALUES('kpi4','همکاری تیمی','collaboration','تعداد تسک‌های مشارکتی',5,'>=','عدد','15','monthly','EMPLOYEE','COUNT(task_collaborators)',1,datetime('now'),datetime('now'));
+INSERT OR IGNORE INTO kpis VALUES('kpi1','کیفیت کار','quality','نمره میانگین کیفیت ارائهها (۰ تا ۱۰۰)',90,'>=','%','40','monthly','EMPLOYEE','AVG(performance_scores_v2.score) * 1.0',1,datetime('now'),datetime('now'));
+INSERT OR IGNORE INTO kpis VALUES('kpi2','تحویل بهموقع','ontime','درصد تسکهای تحویلی در مهلت',85,'>=','%','25','monthly','EMPLOYEE','COUNT(tasks WHERE completed_at<=due_date)/COUNT(tasks)*100',1,datetime('now'),datetime('now'));
+INSERT OR IGNORE INTO kpis VALUES('kpi3','حجم کار','volume','مجموع دقیقهی کار ثبتشده در ماه',1200,'>=','دقیقه','15','monthly','EMPLOYEE','SUM(performance_entries.duration_minutes)',1,datetime('now'),datetime('now'));
+INSERT OR IGNORE INTO kpis VALUES('kpi4','همکاری تیمی','collaboration','تعداد تسکهای مشارکتی',5,'>=','عدد','15','monthly','EMPLOYEE','COUNT(task_collaborators)',1,datetime('now'),datetime('now'));
 INSERT OR IGNORE INTO kpis VALUES('kpi5','رضایت مدیر','satisfaction','میانگین رضایت مدیر از کارکرد',4,'>=','از ۵','5','monthly','EMPLOYEE','AVG(decisions.rating)',1,datetime('now'),datetime('now'));
 
 -- Seed default types
-INSERT OR IGNORE INTO task_types VALUES('tt1','ثبت اسناد','ثبت اسناد حسابداری دوره‌ای','📒',1,datetime('now'));
+INSERT OR IGNORE INTO task_types VALUES('tt1','ثبت اسناد','ثبت اسناد حسابداری دورهای','📒',1,datetime('now'));
 INSERT OR IGNORE INTO task_types VALUES('tt2','بستن دفاتر','بستن دفاتر پایان دوره','📕',1,datetime('now'));
 INSERT OR IGNORE INTO task_types VALUES('tt3','اظهارنامه مالیاتی','تهیه و ارسال اظهارنامه','🧾',1,datetime('now'));
 INSERT OR IGNORE INTO task_types VALUES('tt4','حسابرسی','حسابرسی و بررسی اسناد','🔍',1,datetime('now'));
@@ -457,10 +457,10 @@ INSERT OR IGNORE INTO process_types VALUES('pt2','فرآیند فصلی','دور
 INSERT OR IGNORE INTO process_types VALUES('pt3','فرآیند سالانه','دوره سالانه — ۵ مرحله',5,1,datetime('now'));
 
 INSERT OR IGNORE INTO role_types VALUES('rt1','ADMIN','مدیر سامانه — دسترسی کامل','["all"]',1,datetime('now'));
-INSERT OR IGNORE INTO role_types VALUES('rt2','CEO','مدیرعامل — دید همه شرکت‌ها','["view_all","approve"]',1,datetime('now'));
+INSERT OR IGNORE INTO role_types VALUES('rt2','CEO','مدیرعامل — دید همه شرکتها','["view_all","approve"]',1,datetime('now'));
 INSERT OR IGNORE INTO role_types VALUES('rt3','EMPLOYEE','کارمند — دسترسی محدود','["view_assigned","submit_work"]',1,datetime('now'));
 
-INSERT OR IGNORE INTO performance_types VALUES('pft1','حسابداری','accounting','کارهای حسابداری دوره‌ای',1,datetime('now'));
+INSERT OR IGNORE INTO performance_types VALUES('pft1','حسابداری','accounting','کارهای حسابداری دورهای',1,datetime('now'));
 INSERT OR IGNORE INTO performance_types VALUES('pft2','مالیاتی','tax','امور مالیاتی',1,datetime('now'));
 INSERT OR IGNORE INTO performance_types VALUES('pft3','حسابرسی','audit','حسابرسی و کنترل',1,datetime('now'));
 INSERT OR IGNORE INTO performance_types VALUES('pft4','اداری','admin','کارهای اداری',1,datetime('now'));
@@ -547,7 +547,74 @@ CREATE TABLE IF NOT EXISTS moudian_invoices(
  updated_at TEXT NOT NULL
 );
 
--- Seed default tax deadline types
+-- Phase 2: Client Portal (پرتال مشتری)
+CREATE TABLE IF NOT EXISTS client_portal_users(
+ id TEXT PRIMARY KEY,
+ company_id TEXT NOT NULL REFERENCES companies(id),
+ person_id TEXT REFERENCES persons(id),
+ username TEXT NOT NULL UNIQUE,
+ password_hash TEXT NOT NULL,
+ display_name TEXT NOT NULL DEFAULT '',
+ email TEXT NOT NULL DEFAULT '',
+ phone TEXT NOT NULL DEFAULT '',
+ active INTEGER NOT NULL DEFAULT 1,
+ created_by TEXT NOT NULL REFERENCES users(id),
+ created_at TEXT NOT NULL,
+ last_login TEXT
+);
+
+-- Phase 2: Document Management (مدیریت اسناد)
+CREATE TABLE IF NOT EXISTS documents(
+ id TEXT PRIMARY KEY,
+ company_id TEXT NOT NULL REFERENCES companies(id),
+ category TEXT NOT NULL DEFAULT 'general',
+ title TEXT NOT NULL,
+ description TEXT NOT NULL DEFAULT '',
+ file_name TEXT NOT NULL,
+ stored_name TEXT NOT NULL,
+ file_size INTEGER NOT NULL DEFAULT 0,
+ mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+ sha256 TEXT NOT NULL DEFAULT '',
+ version INTEGER NOT NULL DEFAULT 1,
+ parent_id TEXT REFERENCES documents(id),
+ uploaded_by TEXT NOT NULL REFERENCES users(id),
+ uploaded_at TEXT NOT NULL,
+ tags TEXT NOT NULL DEFAULT ''
+);
+
+-- Phase 2: E-Signature (امضای الکترونیکی)
+CREATE TABLE IF NOT EXISTS document_signatures(
+ id TEXT PRIMARY KEY,
+ document_id TEXT NOT NULL REFERENCES documents(id),
+ signer_type TEXT NOT NULL DEFAULT 'internal',
+ signer_id TEXT,
+ signer_name TEXT NOT NULL,
+ signature_text TEXT NOT NULL,
+ signature_hash TEXT NOT NULL,
+ signed_at TEXT NOT NULL,
+ ip_address TEXT NOT NULL DEFAULT ''
+);
+
+-- Phase 2: Recurring Task Templates (قالبهای کار تکرارپذیر)
+CREATE TABLE IF NOT EXISTS task_templates(
+ id TEXT PRIMARY KEY,
+ name TEXT NOT NULL,
+ description TEXT NOT NULL DEFAULT '',
+ company_id TEXT REFERENCES companies(id),
+ task_type TEXT NOT NULL DEFAULT 'ثبت اسناد',
+ priority TEXT NOT NULL DEFAULT 'NORMAL',
+ weight INTEGER NOT NULL DEFAULT 1,
+ scope TEXT NOT NULL DEFAULT '',
+ frequency TEXT NOT NULL DEFAULT 'monthly',
+ day_of_month INTEGER,
+ day_of_week INTEGER,
+ assignee_id TEXT REFERENCES users(id),
+ active INTEGER NOT NULL DEFAULT 1,
+ created_by TEXT NOT NULL REFERENCES users(id),
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL,
+ last_generated TEXT
+);
 """
 
 
@@ -576,7 +643,7 @@ def init_db() -> None:
             ("performance_entries", "due_date", "TEXT"),
             ("performance_entries", "progress", "INTEGER NOT NULL DEFAULT 0"),
             ("performance_entries", "updated_at", "TEXT"),
-            # Settings v2: rich company fields (تعریف شرکت حرفه‌ای)
+            # Settings v2: rich company fields (تعریف شرکت حرفهای)
             ("companies", "kind", "TEXT NOT NULL DEFAULT 'LEGAL'"),
             ("companies", "first_name", "TEXT NOT NULL DEFAULT ''"),
             ("companies", "last_name", "TEXT NOT NULL DEFAULT ''"),
@@ -686,61 +753,61 @@ def require_role(user: sqlite3.Row, *roles: str) -> None:
         raise HTTPException(403, "دسترسی کافی ندارید")
 
 
-# ===== FINE-GRAINED PERMISSION SYSTEM (نقش‌ها و دسترسی‌ها به ریز فیلد) =====
-# هر کاربر می‌تواند علاوه بر نقش پایه، دسترسی‌های ریز داشته باشد.
-# users.permissions = NULL یعنی پیش‌فرض نقش؛ در غیر این صورت JSON {perm_key: bool}
+# ===== FINE-GRAINED PERMISSION SYSTEM (نقشها و دسترسیها به ریز فیلد) =====
+# هر کاربر میتواند علاوه بر نقش پایه، دسترسیهای ریز داشته باشد.
+# users.permissions = NULL یعنی پیشفرض نقش؛ در غیر این صورت JSON {perm_key: bool}
 
 PERMISSION_CATALOG = [
-    {"group": "داشبورد و گزارش‌ها", "items": [
+    {"group": "داشبورد و گزارشها", "items": [
         {"key": "dashboard.view", "label": "مشاهده نمای کلی", "roles": ["ADMIN", "CEO", "EMPLOYEE"]},
         {"key": "reports.kpi", "label": "گزارش عملکرد تیم (KPI)", "roles": ["ADMIN", "CEO"]},
         {"key": "reports.iso", "label": "گزارش ISO 30414", "roles": ["ADMIN", "CEO"]},
         {"key": "audit.view", "label": "گزارش ممیزی", "roles": ["ADMIN"]},
     ]},
-    {"group": "تسک‌ها", "items": [
-        {"key": "tasks.view", "label": "مشاهده تسک‌ها", "roles": ["ADMIN", "CEO", "EMPLOYEE"]},
+    {"group": "تسکها", "items": [
+        {"key": "tasks.view", "label": "مشاهده تسکها", "roles": ["ADMIN", "CEO", "EMPLOYEE"]},
         {"key": "tasks.create", "label": "ایجاد و واگذاری تسک", "roles": ["ADMIN", "CEO"]},
         {"key": "tasks.decide", "label": "تصمیم مدیر روی تسک (تأیید/برگشت)", "roles": ["ADMIN", "CEO"]},
         {"key": "tasks.reference", "label": "بارگذاری فایل مرجع Excel", "roles": ["ADMIN", "CEO"]},
     ]},
-    {"group": "شرکت‌ها", "items": [
-        {"key": "companies.view", "label": "مشاهده شرکت‌ها (فقط شرکت‌های واگذارشده)", "roles": ["ADMIN", "CEO", "EMPLOYEE"]},
+    {"group": "شرکتها", "items": [
+        {"key": "companies.view", "label": "مشاهده شرکتها (فقط شرکتهای واگذارشده)", "roles": ["ADMIN", "CEO", "EMPLOYEE"]},
         {"key": "companies.manage", "label": "تعریف/ویرایش/حذف شرکت", "roles": ["ADMIN"]},
     ]},
     {"group": "کاربران", "items": [
         {"key": "users.view", "label": "مشاهده فهرست کاربران", "roles": ["ADMIN", "CEO"]},
-        {"key": "users.manage", "label": "ایجاد/ویرایش/غیرفعال‌سازی کاربر", "roles": ["ADMIN"]},
-        {"key": "users.permissions", "label": "تعیین نقش‌ها و دسترسی‌های ریز کاربران", "roles": ["ADMIN"]},
+        {"key": "users.manage", "label": "ایجاد/ویرایش/غیرفعالسازی کاربر", "roles": ["ADMIN"]},
+        {"key": "users.permissions", "label": "تعیین نقشها و دسترسیهای ریز کاربران", "roles": ["ADMIN"]},
     ]},
     {"group": "عملکرد", "items": [
         {"key": "performance.own", "label": "ثبت عملکرد خود", "roles": ["ADMIN", "CEO", "EMPLOYEE"]},
         {"key": "performance.review", "label": "بررسی و تصمیم روی عملکرد کارکنان", "roles": ["ADMIN", "CEO"]},
         {"key": "performance.reference", "label": "بارگذاری مرجع عملکرد", "roles": ["ADMIN", "CEO"]},
     ]},
-    {"group": "کارکرد و درخواست‌ها", "items": [
+    {"group": "کارکرد و درخواستها", "items": [
         {"key": "attendance.own", "label": "ثبت ورود/خروج خود", "roles": ["ADMIN", "CEO", "EMPLOYEE"]},
         {"key": "attendance.all", "label": "مشاهده کارکرد همه کارکنان", "roles": ["ADMIN", "CEO"]},
-        {"key": "requests.view", "label": "مشاهده درخواست‌ها", "roles": ["ADMIN", "CEO", "EMPLOYEE"]},
-        {"key": "requests.decide", "label": "تأیید/رد درخواست‌ها", "roles": ["ADMIN", "CEO"]},
+        {"key": "requests.view", "label": "مشاهده درخواستها", "roles": ["ADMIN", "CEO", "EMPLOYEE"]},
+        {"key": "requests.decide", "label": "تأیید/رد درخواستها", "roles": ["ADMIN", "CEO"]},
     ]},
     {"group": "ابزارها", "items": [
         {"key": "kanban.view", "label": "برد کانبان", "roles": ["ADMIN", "CEO", "EMPLOYEE"]},
         {"key": "time.use", "label": "تایم ترکینگ", "roles": ["ADMIN", "CEO", "EMPLOYEE"]},
         {"key": "chat.use", "label": "گفتگو", "roles": ["ADMIN", "CEO", "EMPLOYEE"]},
-        {"key": "chat.monitor", "label": "نظارت نا‌محسوس بر گفتگوها", "roles": ["ADMIN"]},
-        {"key": "automations.manage", "label": "مدیریت اتوماسیون‌ها", "roles": ["ADMIN", "CEO"]},
+        {"key": "chat.monitor", "label": "نظارت نامحسوس بر گفتگوها", "roles": ["ADMIN"]},
+        {"key": "automations.manage", "label": "مدیریت اتوماسیونها", "roles": ["ADMIN", "CEO"]},
     ]},
     {"group": "تنظیمات", "items": [
         {"key": "settings.view", "label": "ورود به تنظیمات", "roles": ["ADMIN", "CEO"]},
         {"key": "settings.types", "label": "مدیریت انواع تسک/فرآیند/نقش/عملکرد", "roles": ["ADMIN", "CEO"]},
         {"key": "settings.request_types", "label": "مدیریت انواع درخواست", "roles": ["ADMIN", "CEO"]},
-        {"key": "settings.kpi", "label": "مدیریت شاخص‌های کلیدی (KPI)", "roles": ["ADMIN", "CEO"]},
+        {"key": "settings.kpi", "label": "مدیریت شاخصهای کلیدی (KPI)", "roles": ["ADMIN", "CEO"]},
         {"key": "settings.companies", "label": "زیربخش تعریف شرکت", "roles": ["ADMIN", "CEO"]},
         {"key": "settings.users", "label": "زیربخش کاربران", "roles": ["ADMIN", "CEO"]},
-        {"key": "settings.permissions", "label": "زیربخش نقش‌ها و دسترسی‌ها", "roles": ["ADMIN", "CEO"]},
+        {"key": "settings.permissions", "label": "زیربخش نقشها و دسترسیها", "roles": ["ADMIN", "CEO"]},
     ]},
     {"group": "مشتریان", "items": [
-        {"key": "customers.view", "label": "مشاهده اشخاص و شرکت‌های مشتری", "roles": ["ADMIN", "CEO", "EMPLOYEE"]},
+        {"key": "customers.view", "label": "مشاهده اشخاص و شرکتهای مشتری", "roles": ["ADMIN", "CEO", "EMPLOYEE"]},
         {"key": "customers.manage", "label": "تعریف/ویرایش/حذف اشخاص مشتری", "roles": ["ADMIN", "CEO"]},
         {"key": "customers.contracts", "label": "مدیریت قراردادها", "roles": ["ADMIN", "CEO"]},
         {"key": "customers.proformas", "label": "مدیریت پیش فاکتورها", "roles": ["ADMIN", "CEO"]},
@@ -768,7 +835,7 @@ def effective_permissions(user: sqlite3.Row) -> dict[str, bool]:
                         perms[key] = bool(value)
         except (ValueError, TypeError):
             pass
-    # محافظت ضد قفل‌شدگی: مدیر فعال همیشه می‌تواند تنظیمات دسترسی را ببیند
+    # محافظت ضد قفلشدگی: مدیر فعال همیشه میتواند تنظیمات دسترسی را ببیند
     if user["role"] == "ADMIN":
         perms["users.view"] = True
         perms["users.permissions"] = True
@@ -815,8 +882,8 @@ def normalize_date_input(value: str | None) -> str | None:
 
 ALIASES = {
     "row": ["ردیف", "شماره ردیف", "ردیف سند", "row", "row no", "linenumber"],
-    "voucher": ["شماره سند", "شماره‌سند", "شماره", "شماره سند حسابداری", "document number", "voucher", "docno"],
-    "date": ["تاریخ سند", "تاریخ", "تاریخ‌سند", "document date", "date"],
+    "voucher": ["شماره سند", "شمارهسند", "شماره", "شماره سند حسابداری", "document number", "voucher", "docno"],
+    "date": ["تاریخ سند", "تاریخ", "تاریخسند", "document date", "date"],
     "account": ["کد حساب", "حساب", "account", "accountcode", "کل/معین/تفصیل"],
     "major": ["کل", "کد کل", "حساب کل", "major account"],
     "middle": ["معین", "کد معین", "حساب معین", "sub account"],
@@ -863,9 +930,9 @@ def read_excel(upload: UploadFile, content: bytes) -> tuple[list[dict[str, str]]
     if len(content) > MAX_UPLOAD:
         raise HTTPException(413, "حجم فایل بیشتر از ۲۰ مگابایت است")
     if upload.filename and Path(upload.filename).suffix.lower() != ".xlsx":
-        raise HTTPException(400, "فقط فایل با پسوند .xlsx پذیرفته می‌شود")
+        raise HTTPException(400, "فقط فایل با پسوند .xlsx پذیرفته میشود")
     if not content.startswith(b"PK\x03\x04"):
-        raise HTTPException(400, "فایل باید Excel با فرمت .xlsx باشد؛ فایل‌های Macro دار پذیرفته نمی‌شوند")
+        raise HTTPException(400, "فایل باید Excel با فرمت .xlsx باشد؛ فایلهای Macro دار پذیرفته نمیشوند")
     try:
         from openpyxl import load_workbook
         from io import BytesIO
@@ -874,13 +941,13 @@ def read_excel(upload: UploadFile, content: bytes) -> tuple[list[dict[str, str]]
             if len(members) > 500 or sum(item.file_size for item in members) > 150 * 1024 * 1024:
                 raise HTTPException(413, "ساختار داخلی فایل از سقف پردازش مجاز بیشتر است")
             if any("vbaproject" in item.filename.lower() for item in members):
-                raise HTTPException(400, "فایل‌های دارای Macro پذیرفته نمی‌شوند")
+                raise HTTPException(400, "فایلهای دارای Macro پذیرفته نمیشوند")
         wb = load_workbook(BytesIO(content), read_only=True, data_only=True, keep_links=False)
         ws = wb.active
         if ws.max_row and ws.max_row > 200_001:
-            raise HTTPException(413, "تعداد ردیف‌ها از سقف مجاز بیشتر است")
+            raise HTTPException(413, "تعداد ردیفها از سقف مجاز بیشتر است")
         if len(wb.sheetnames) > 10:
-            raise HTTPException(413, "تعداد برگه‌های فایل از سقف مجاز بیشتر است")
+            raise HTTPException(413, "تعداد برگههای فایل از سقف مجاز بیشتر است")
         header_row = None
         mapping: dict[str, int] = {}
         for idx, row in enumerate(ws.iter_rows(min_row=1, max_row=min(ws.max_row or 1, 15), values_only=True), 1):
@@ -896,7 +963,7 @@ def read_excel(upload: UploadFile, content: bytes) -> tuple[list[dict[str, str]]
                 header_row, mapping = idx, found
                 break
         if header_row is None:
-            raise HTTPException(400, "سربرگ‌های الزامی پیدا نشدند. فایل نمونه را از بخش راهنما دریافت کنید.")
+            raise HTTPException(400, "سربرگهای الزامی پیدا نشدند. فایل نمونه را از بخش راهنما دریافت کنید.")
         rows: list[dict[str, str]] = []
         for excel_row, raw in enumerate(ws.iter_rows(min_row=header_row + 1, values_only=True), header_row + 1):
             if not any(v not in (None, "") for v in raw):
@@ -918,7 +985,7 @@ def read_excel(upload: UploadFile, content: bytes) -> tuple[list[dict[str, str]]
             }
             rows.append(row)
             if len(rows) > 200_000:
-                raise HTTPException(413, "تعداد ردیف‌های معتبر از سقف مجاز بیشتر است")
+                raise HTTPException(413, "تعداد ردیفهای معتبر از سقف مجاز بیشتر است")
         if not rows:
             raise HTTPException(400, "فایل هیچ ردیف اطلاعاتی ندارد")
         return rows, wb.sheetnames[0]
@@ -968,7 +1035,7 @@ def reconcile(sub_rows: list[dict[str, str]], ref_rows: list[dict[str, str]] | N
         "matched_exact": None,
         "reference_only": None,
         "submission_only": None,
-        "notes": ["شماره سند تکراری به‌تنهایی خطا نیست؛ ردیف‌های یک سند می‌توانند شماره مشترک داشته باشند."],
+        "notes": ["شماره سند تکراری بهتنهایی خطا نیست؛ ردیفهای یک سند میتوانند شماره مشترک داشته باشند."],
     }
     result["balanced"] = result["debit_total"] == result["credit_total"]
     if ref_rows is not None:
@@ -984,7 +1051,7 @@ def reconcile(sub_rows: list[dict[str, str]], ref_rows: list[dict[str, str]] | N
                 matched += 1
         ref_left = sum(remaining.values())
         result.update(matched_exact=matched, reference_only=ref_left, submission_only=len(sub_rows) - matched)
-        result["notes"].append("تطبیق متنی دقیق انجام شده است؛ تفاوت قالب تاریخ یا شرح می‌تواند مورد را برای بررسی مدیر باقی بگذارد.")
+        result["notes"].append("تطبیق متنی دقیق انجام شده است؛ تفاوت قالب تاریخ یا شرح میتواند مورد را برای بررسی مدیر باقی بگذارد.")
     else:
         result["notes"].append("برای این تسک مرجع ثبت نشده؛ نتیجه تطبیق با روش NO_REFERENCE بررسی شود.")
     return result
@@ -1013,13 +1080,13 @@ def validate_template(rows: list[dict[str, str]]) -> dict[str, Any]:
         if not has_value:
             missing_fields.append(field)
     if missing_fields:
-        errors.append(f"ستون‌های الزامی خالی یا ناقص است: {', '.join(missing_fields)}")
+        errors.append(f"ستونهای الزامی خالی یا ناقص است: {', '.join(missing_fields)}")
 
     # Check at least one numeric value in debit/credit
     has_debit = any(re.fullmatch(r"-?\d+(?:\.\d+)?", r.get("debit", "")) for r in rows)
     has_credit = any(re.fullmatch(r"-?\d+(?:\.\d+)?", r.get("credit", "")) for r in rows)
     if not has_debit and not has_credit:
-        errors.append("هیچ مقدار عددی در ستون‌های بدهکار/بستانکار پیدا نشد")
+        errors.append("هیچ مقدار عددی در ستونهای بدهکار/بستانکار پیدا نشد")
 
     # Check duplicates within the same voucher+line
     seen_keys = set()
@@ -1071,7 +1138,7 @@ def reconcile_detailed(sub_rows: list[dict[str, str]], ref_rows: list[dict[str, 
                         "date": r["date"], "account": r["account"], "debit": r["debit"],
                         "credit": r["credit"], "description": r["description"],
                         "issue_type": "OUT_OF_RANGE",
-                        "issue_detail": f"تاریخ {d} خارج از بازه اعلام‌شده ({start} تا {end}) است",
+                        "issue_detail": f"تاریخ {d} خارج از بازه اعلامشده ({start} تا {end}) است",
                         "ref_debit": None, "ref_credit": None, "ref_date": None,
                         "ref_account": None, "ref_description": None,
                     })
@@ -1410,16 +1477,16 @@ def service_worker():
 @app.get("/api/status")
 def status():
     with db() as con:
-        return {"setup_needed": con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0, "product": "YFG Accounting Desk", "version": "0.3.0.07"}
+        return {"setup_needed": con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0, "product": "YFG Accounting Desk", "version": "0.3.0.08"}
 
 
 @app.post("/api/setup")
 def setup(payload: SetupModel, request: Request):
     with db() as con:
         if con.execute("SELECT COUNT(*) FROM users").fetchone()[0]:
-            raise HTTPException(409, "راه‌اندازی اولیه قبلاً انجام شده است")
+            raise HTTPException(409, "راهاندازی اولیه قبلاً انجام شده است")
         if not re.fullmatch(r"[A-Za-z0-9_.-]+", payload.username):
-            raise HTTPException(400, "نام کاربری فقط می‌تواند شامل حروف انگلیسی، عدد و . _ - باشد")
+            raise HTTPException(400, "نام کاربری فقط میتواند شامل حروف انگلیسی، عدد و . _ - باشد")
         user_id = uid()
         con.execute("INSERT INTO users VALUES(?,?,?,?,?,?,?)", (user_id, payload.name, payload.username.lower(), password_hash(payload.password), "ADMIN", 1, now()))
         audit(con, user_id, "INITIAL_SETUP", "user", user_id)
@@ -1492,7 +1559,7 @@ def me(request: Request):
             "permissions": effective_permissions(user)}
 
 
-# ===== PERMISSION MANAGEMENT ENDPOINTS (نقش‌ها و دسترسی‌ها) =====
+# ===== PERMISSION MANAGEMENT ENDPOINTS (نقشها و دسترسیها) =====
 
 @app.get("/api/permissions/catalog")
 def permissions_catalog(request: Request):
@@ -1532,7 +1599,7 @@ def get_user_permissions(user_id: str, request: Request):
 
 
 class PermissionsModel(BaseModel):
-    permissions: dict[str, bool] | None = None  # None = بازگشت به پیش‌فرض نقش
+    permissions: dict[str, bool] | None = None  # None = بازگشت به پیشفرض نقش
 
 
 @app.put("/api/users/{user_id}/permissions")
@@ -1540,8 +1607,8 @@ def set_user_permissions(user_id: str, payload: PermissionsModel, request: Reque
     user = current_user(request)
     require_perm(user, "users.permissions")
     if payload.permissions is not None and user_id == user["id"]:
-        # جلوگیری از قفل‌شدن مدیر روی خودش
-        raise HTTPException(400, "برای حساب خودتان نمی‌توانید دسترسی‌ها را محدود کنید")
+        # جلوگیری از قفلشدن مدیر روی خودش
+        raise HTTPException(400, "برای حساب خودتان نمیتوانید دسترسیها را محدود کنید")
     with db() as con:
         target = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
         if not target:
@@ -1555,7 +1622,7 @@ def set_user_permissions(user_id: str, payload: PermissionsModel, request: Reque
             con.execute("UPDATE users SET permissions=? WHERE id=?", (json.dumps(clean, ensure_ascii=False), user_id))
             audit(con, user["id"], "PERMISSIONS_SET", "user", user_id, {"count": len(clean)})
         updated = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
-        con.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))  # اعمال فوری دسترسی‌ها
+        con.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))  # اعمال فوری دسترسیها
         return {"ok": True, "effective": effective_permissions(updated)}
 
 
@@ -1598,7 +1665,7 @@ def list_references(company_id: str, request: Request):
 def add_company(payload: CompanyCreate, request: Request):
     user = current_user(request)
     require_perm(user, "companies.manage")
-    # نام: برای حقیقی از نام + نام خانوادگی ساخته می‌شود اگر خالی باشد
+    # نام: برای حقیقی از نام + نام خانوادگی ساخته میشود اگر خالی باشد
     name = (payload.name or "").strip()
     if payload.kind == "REAL" and not name:
         name = f"{payload.first_name.strip()} {payload.last_name.strip()}".strip()
@@ -1629,7 +1696,7 @@ def users(request: Request):
         result = []
         for r in rows:
             d = dict(r)
-            d.pop("permissions", None)  # خروجی خام دسترسی‌ها را لو نده
+            d.pop("permissions", None)  # خروجی خام دسترسیها را لو نده
             n_access = con.execute("SELECT COUNT(*) FROM company_access WHERE user_id=?", (r["id"],)).fetchone()[0]
             d["company_count"] = n_access
             result.append(d)
@@ -1643,7 +1710,7 @@ def add_user(payload: UserCreate, request: Request):
     if payload.role not in ("EMPLOYEE", "CEO", "ADMIN"):
         raise HTTPException(400, "نقش نامعتبر است")
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", payload.username):
-        raise HTTPException(400, "نام کاربری فقط می‌تواند شامل حروف انگلیسی، عدد و . _ - باشد")
+        raise HTTPException(400, "نام کاربری فقط میتواند شامل حروف انگلیسی، عدد و . _ - باشد")
     if payload.password2 is not None and payload.password != payload.password2:
         raise HTTPException(400, "رمز عبور و تکرار آن یکسان نیستند")
     full_name = (payload.name or "").strip()
@@ -1661,7 +1728,7 @@ def add_user(payload: UserCreate, request: Request):
             )
             for company_id in set(payload.company_ids):
                 if not con.execute("SELECT 1 FROM companies WHERE id=?", (company_id,)).fetchone():
-                    raise HTTPException(400, "شرکت انتخاب‌شده معتبر نیست")
+                    raise HTTPException(400, "شرکت انتخابشده معتبر نیست")
                 con.execute("INSERT INTO company_access VALUES(?,?)", (new_id, company_id))
         except sqlite3.IntegrityError:
             raise HTTPException(409, "نام کاربری تکراری است")
@@ -1723,11 +1790,11 @@ def update_user(user_id: str, payload: UserUpdate, request: Request):
             set_clause = ", ".join(f"{k}=?" for k in updates)
             con.execute(f"UPDATE users SET {set_clause} WHERE id=?", (*updates.values(), user_id))
             audit(con, user["id"], "USER_UPDATE", "user", user_id, {k: str(v)[:50] for k, v in updates.items()})
-        # جایگزینی کامل شرکت‌های واگذارشده در صورت ارسال
+        # جایگزینی کامل شرکتهای واگذارشده در صورت ارسال
         if payload.company_ids is not None:
             for company_id in set(payload.company_ids):
                 if not con.execute("SELECT 1 FROM companies WHERE id=?", (company_id,)).fetchone():
-                    raise HTTPException(400, "شرکت انتخاب‌شده معتبر نیست")
+                    raise HTTPException(400, "شرکت انتخابشده معتبر نیست")
             con.execute("DELETE FROM company_access WHERE user_id=?", (user_id,))
             for company_id in set(payload.company_ids):
                 con.execute("INSERT INTO company_access VALUES(?,?)", (user_id, company_id))
@@ -1739,7 +1806,7 @@ def deactivate_user(user_id: str, request: Request):
     user = current_user(request)
     require_perm(user, "users.manage")
     if user_id == user["id"]:
-        raise HTTPException(400, "نمی‌توانید حساب خودتان را غیرفعال کنید")
+        raise HTTPException(400, "نمیتوانید حساب خودتان را غیرفعال کنید")
     with db() as con:
         existing = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
         if not existing:
@@ -1828,7 +1895,7 @@ def deactivate_company(company_id: str, request: Request):
         # Check for active tasks
         active_tasks = con.execute("SELECT COUNT(*) FROM tasks WHERE company_id=? AND status NOT IN ('APPROVED','APPROVED_WITH_EXCEPTION','CANCELLED')", (company_id,)).fetchone()[0]
         if active_tasks > 0:
-            raise HTTPException(400, f"این شرکت {active_tasks} تسک فعال دارد؛ ابتدا تسک‌ها را ببندید")
+            raise HTTPException(400, f"این شرکت {active_tasks} تسک فعال دارد؛ ابتدا تسکها را ببندید")
         con.execute("UPDATE companies SET active=0 WHERE id=?", (company_id,))
         audit(con, user["id"], "COMPANY_DEACTIVATE", "company", company_id, {})
         return {"ok": True}
@@ -1964,12 +2031,12 @@ def create_task(payload: TaskCreate, request: Request):
     payload.due_date=normalize_date_input(payload.due_date)
     with db() as con:
         if not con.execute("SELECT 1 FROM companies WHERE id=? AND active=1", (payload.company_id,)).fetchone():
-            raise HTTPException(400, "شرکت انتخاب‌شده معتبر نیست")
+            raise HTTPException(400, "شرکت انتخابشده معتبر نیست")
         assignee = con.execute("SELECT id,role FROM users WHERE id=? AND active=1", (payload.assignee_id,)).fetchone()
         if not assignee or assignee["role"] not in ("EMPLOYEE", "ADMIN"):
-            raise HTTPException(400, "مسئول انتخاب‌شده معتبر نیست")
+            raise HTTPException(400, "مسئول انتخابشده معتبر نیست")
         if assignee["role"] == "EMPLOYEE" and not can_access_company(con, assignee, payload.company_id):
-            raise HTTPException(400, "این کارمند به شرکت انتخاب‌شده دسترسی ندارد")
+            raise HTTPException(400, "این کارمند به شرکت انتخابشده دسترسی ندارد")
         # Validate collaborators
         for cid in (payload.collaborator_ids or []):
             coll = con.execute("SELECT id,role FROM users WHERE id=? AND active=1", (cid,)).fetchone()
@@ -1985,7 +2052,7 @@ def create_task(payload: TaskCreate, request: Request):
         for cid in set(payload.collaborator_ids or []):
             if cid != payload.assignee_id:
                 con.execute("INSERT OR IGNORE INTO task_collaborators VALUES(?,?,?,?)", (task_id, cid, "COLLABORATOR", user["id"], timestamp))
-                notify(con, cid, "همکار در تسک", f"شما به‌عنوان همکار به تسک «{payload.title}» اضافه شدید")
+                notify(con, cid, "همکار در تسک", f"شما بهعنوان همکار به تسک «{payload.title}» اضافه شدید")
         # Create checklist steps (up to 5)
         for i, step_title in enumerate((payload.checklist_steps or [])[:5], 1):
             con.execute("INSERT INTO task_checklist VALUES(?,?,?,?,?,?,?,?)", (uid(), task_id, i, step_title.strip(), 0, None, None, timestamp))
@@ -2013,7 +2080,7 @@ def update_task(task_id: str, payload: TaskUpdate, request: Request):
             changes.append("assignment")
         if payload.progress is not None:
             if user["role"] not in ("ADMIN","CEO") and task["assignee_id"] != user["id"]:
-                raise HTTPException(403,"فقط مسئول تسک می‌تواند پیشرفت را ثبت کند")
+                raise HTTPException(403,"فقط مسئول تسک میتواند پیشرفت را ثبت کند")
             con.execute("UPDATE tasks SET progress=?,status=CASE WHEN status IN ('ASSIGNED','IN_PROGRESS','RETURNED') THEN 'IN_PROGRESS' ELSE status END,updated_at=? WHERE id=?",(payload.progress,now(),task_id))
             changes.append("progress")
         if payload.status is not None:
@@ -2052,12 +2119,12 @@ def delegate_task(task_id: str,payload: DelegateModel,request: Request):
         parent=task_access(con,user,task_id)
         if user["role"] in ("ADMIN","CEO") or parent["assignee_id"]!=user["id"]:
             if user["role"] not in ("ADMIN","CEO"):
-                raise HTTPException(403,"فقط مسئول تسک می‌تواند بخشی از آن را ارجاع دهد")
+                raise HTTPException(403,"فقط مسئول تسک میتواند بخشی از آن را ارجاع دهد")
         if parent["status"] in ("APPROVED","APPROVED_WITH_EXCEPTION","CANCELLED"):
-            raise HTTPException(409,"از تسک پایان‌یافته نمی‌توان بخش ارجاع داد")
+            raise HTTPException(409,"از تسک پایانیافته نمیتوان بخش ارجاع داد")
         target=con.execute("SELECT id,role FROM users WHERE id=? AND active=1",(payload.assignee_id,)).fetchone()
         if not target or target["role"]!="EMPLOYEE" or not can_access_company(con,target,parent["company_id"]):
-            raise HTTPException(400,"همکار انتخاب‌شده به این شرکت دسترسی ندارد")
+            raise HTTPException(400,"همکار انتخابشده به این شرکت دسترسی ندارد")
         child_id=uid(); timestamp=now()
         con.execute("INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(child_id,parent["company_id"],payload.title,payload.description,parent["fiscal_period"],payload.scope,parent["priority"],parent["weight"],payload.due_date or parent["due_date"],"ASSIGNED",0,parent["id"],parent["reference_version_id"],payload.assignee_id,user["id"],timestamp,timestamp))
         con.execute("INSERT INTO task_assignments VALUES(?,?,?,?,?,?,?)",(uid(),child_id,None,payload.assignee_id,user["id"],"ارجاع بخش از تسک "+parent["id"],timestamp))
@@ -2108,7 +2175,7 @@ async def submit_task(task_id: str, request: Request, claimed_start: str = Form(
     with db() as con:
         task=task_access(con,user,task_id)
         if user["role"] not in ("ADMIN","CEO") and task["assignee_id"]!=user["id"]:
-            raise HTTPException(403,"فقط مسئول فعلی تسک می‌تواند گزارش بفرستد")
+            raise HTTPException(403,"فقط مسئول فعلی تسک میتواند گزارش بفرستد")
         if task["status"] in ("APPROVED","APPROVED_WITH_EXCEPTION","CANCELLED"):
             raise HTTPException(409,"این تسک دیگر پذیرای گزارش نیست")
         if con.execute("SELECT 1 FROM submissions WHERE task_id=? AND sha256=?",(task_id,digest)).fetchone():
@@ -2129,7 +2196,7 @@ async def submit_task(task_id: str, request: Request, claimed_start: str = Form(
                 previous_keys.update(r["row_key"] for r in con.execute(f"SELECT DISTINCT row_key FROM normalized_rows WHERE company_id=? AND fiscal_period=? AND row_key IN ({placeholders})",[task["company_id"],task["fiscal_period"],*chunk]))
         report["cross_submission_duplicates"] = sum(1 for key in row_keys if key in previous_keys)
         if report["cross_submission_duplicates"]:
-            report["notes"].append("برخی ردیف‌ها در گزارش کار قبلی همین شرکت/دوره دیده شده‌اند؛ هم‌پوشانی دامنه را مدیر بررسی کند.")
+            report["notes"].append("برخی ردیفها در گزارش کار قبلی همین شرکت/دوره دیده شدهاند؛ همپوشانی دامنه را مدیر بررسی کند.")
         report["reference_version_id"] = ref["id"] if ref else None
         report["reference_version"] = ref["version"] if ref else None
         version=con.execute("SELECT COALESCE(MAX(version),0)+1 FROM submissions WHERE task_id=?",(task_id,)).fetchone()[0]
@@ -2185,7 +2252,7 @@ def decide(task_id: str,payload: DecisionModel,request: Request):
             if not checked or not json.loads(checked["report_json"]).get("reference_attached"):
                 raise HTTPException(400,"برای روش تطبیق با مرجع، ارسال دارای مرجع لازم است")
         if payload.review_method=="NO_REFERENCE" and task["reference_version_id"]:
-            raise HTTPException(400,"برای این تسک مرجع نسخه‌دار متصل است؛ روش بررسی را انتخاب کنید")
+            raise HTTPException(400,"برای این تسک مرجع نسخهدار متصل است؛ روش بررسی را انتخاب کنید")
         decision_id=uid(); created=now()
         con.execute("INSERT INTO decisions VALUES(?,?,?,?,?,?,?,?,?,?)",(decision_id,task_id,sub["id"] if sub else None,payload.decision,payload.score,payload.review_method,payload.reason,payload.exception_reason,user["id"],created))
         con.execute("UPDATE tasks SET status=?,updated_at=? WHERE id=?",(payload.decision,created,task_id))
@@ -2295,7 +2362,7 @@ def update_performance_entry(entry_id: str, payload: PerformanceEntryModel, requ
         if entry is None:
             raise HTTPException(404, "گزارش عملکرد پیدا نشد")
         if entry["user_id"] != user["id"]:
-            raise HTTPException(403, "فقط صاحب گزارش می‌تواند آن را ویرایش کند")
+            raise HTTPException(403, "فقط صاحب گزارش میتواند آن را ویرایش کند")
         if entry["status"] == "APPROVED":
             raise HTTPException(409, "گزارش تأییدشده قابل ویرایش نیست")
         con.execute("""UPDATE performance_entries SET work_date=?,category=?,title=?,description=?,
@@ -2320,7 +2387,7 @@ def review_performance_entry(entry_id: str, payload: PerformanceReviewModel, req
         if entry is None:
             raise HTTPException(404, "گزارش عملکرد پیدا نشد")
         if entry["user_id"] == user["id"]:
-            raise HTTPException(403, "گزارش عملکرد خودتان را نمی‌توانید بررسی کنید")
+            raise HTTPException(403, "گزارش عملکرد خودتان را نمیتوانید بررسی کنید")
         if entry["status"] == "APPROVED":
             raise HTTPException(409, "این گزارش قبلاً تأیید شده است")
         reviewed = now()
@@ -2857,11 +2924,11 @@ def create_channel(payload: ChatChannelModel, request: Request):
     with db() as con:
         for mid in payload.member_ids:
             exists = con.execute("SELECT 1 FROM users WHERE id=? AND active=1", (mid,)).fetchone()
-            if not exists: raise HTTPException(400, f"کاربر انتخاب‌شده وجود ندارد: {mid}")
+            if not exists: raise HTTPException(400, f"کاربر انتخابشده وجود ندارد: {mid}")
         if len(payload.member_ids) == 1:
             other = payload.member_ids[0]
             if other == user["id"]:
-                raise HTTPException(400, "نمی‌توانید به خودتان گفتگو مستقیم بسازید")
+                raise HTTPException(400, "نمیتوانید به خودتان گفتگو مستقیم بسازید")
             existing = con.execute("""
                 SELECT c.* FROM chat_channels c
                 WHERE c.kind='DIRECT'
@@ -2893,14 +2960,14 @@ def rename_channel(channel_id: str, payload: ChatRenameModel, request: Request):
     user = current_user(request)
     require_perm(user, "chat.use")
     name = (payload.name or "").strip()
-    if not name: raise HTTPException(400, "نام گروه نمی‌تواند خالی باشد")
+    if not name: raise HTTPException(400, "نام گروه نمیتواند خالی باشد")
     with db() as con:
         ch = con.execute("SELECT * FROM chat_channels WHERE id=?", (channel_id,)).fetchone()
         if not ch: raise HTTPException(404, "گفتگو پیدا نشد")
         if ch["kind"] != "GROUP":
-            raise HTTPException(400, "فقط گروه‌ها قابل تغییر نام هستند")
+            raise HTTPException(400, "فقط گروهها قابل تغییر نام هستند")
         if user["role"] not in ("ADMIN", "CEO") and ch["created_by"] != user["id"]:
-            raise HTTPException(403, "فقط سازنده گروه یا مدیر می‌تواند نام را تغییر دهد")
+            raise HTTPException(403, "فقط سازنده گروه یا مدیر میتواند نام را تغییر دهد")
         con.execute("UPDATE chat_channels SET name=? WHERE id=?", (name, channel_id))
         audit(con, user["id"], "CHAT_RENAME", "chat_channel", channel_id, {"name": name})
         return {"id": channel_id, "name": name}
@@ -2913,9 +2980,9 @@ def add_members(channel_id: str, payload: ChatAddMembersModel, request: Request)
         ch = con.execute("SELECT * FROM chat_channels WHERE id=?", (channel_id,)).fetchone()
         if not ch: raise HTTPException(404, "گفتگو پیدا نشد")
         if ch["kind"] != "GROUP":
-            raise HTTPException(400, "فقط در گروه‌ها می‌توان عضو اضافه کرد")
+            raise HTTPException(400, "فقط در گروهها میتوان عضو اضافه کرد")
         if user["role"] not in ("ADMIN", "CEO") and ch["created_by"] != user["id"]:
-            raise HTTPException(403, "فقط سازنده گروه یا مدیر می‌تواند عضو اضافه کند")
+            raise HTTPException(403, "فقط سازنده گروه یا مدیر میتواند عضو اضافه کند")
         added = 0
         for mid in payload.member_ids:
             exists = con.execute("SELECT 1 FROM users WHERE id=? AND active=1", (mid,)).fetchone()
@@ -2969,7 +3036,7 @@ def send_message(channel_id: str, payload: ChatMessageModel, request: Request):
     user = current_user(request)
     require_perm(user, "chat.use")
     if not payload.body.strip() and not payload.attachment_id:
-        raise HTTPException(400, "پیام نمی‌تواند خالی باشد")
+        raise HTTPException(400, "پیام نمیتواند خالی باشد")
     with db() as con:
         ch = con.execute("SELECT * FROM chat_channels WHERE id=?", (channel_id,)).fetchone()
         if not ch: raise HTTPException(404, "گفتگو پیدا نشد")
@@ -3034,7 +3101,7 @@ async def chat_upload(request: Request, file: UploadFile = File(...)):
         raise HTTPException(400, "نام فایل نامعتبر")
     suffix = Path(file.filename).suffix.lower()
     if suffix not in CHAT_ATTACHMENT_ALLOWED:
-        raise HTTPException(400, f"نوع فایل پشتیبانی نمی‌شود: {suffix}. مجاز: تصویر، PDF، اکسل، ورد، فشرده")
+        raise HTTPException(400, f"نوع فایل پشتیبانی نمیشود: {suffix}. مجاز: تصویر، PDF، اکسل، ورد، فشرده")
     att_id = uid()
     stored_name = f"{att_id}{suffix}"
     (ATTACHMENTS_DIR / stored_name).write_bytes(content)
@@ -3274,7 +3341,7 @@ def create_person(payload: PersonCreateModel, request: Request):
     if payload.linked_company_id:
         with db() as con:
             if not con.execute("SELECT 1 FROM companies WHERE id=?", (payload.linked_company_id,)).fetchone():
-                raise HTTPException(400, "شرکت انتخاب‌شده وجود ندارد")
+                raise HTTPException(400, "شرکت انتخابشده وجود ندارد")
     pid = uid()
     with db() as con:
         try:
@@ -3315,7 +3382,7 @@ def update_person(person_id: str, payload: PersonUpdateModel, request: Request):
             payload.linked_company_id = None
         if payload.linked_company_id:
             if not con.execute("SELECT 1 FROM companies WHERE id=?", (payload.linked_company_id,)).fetchone():
-                raise HTTPException(400, "شرکت انتخاب‌شده وجود ندارد")
+                raise HTTPException(400, "شرکت انتخابشده وجود ندارد")
         updates = []
         params: list = []
         for k, v in payload.model_dump(exclude_unset=True).items():
@@ -3761,7 +3828,7 @@ def delete_invoice(invoice_id: str, request: Request):
 
 
 # ========================================================================
-# COMPANY CONTACTS API (تماس‌های متعدد شرکت)
+# COMPANY CONTACTS API (تماسهای متعدد شرکت)
 # ========================================================================
 @app.get("/api/companies/{company_id}/contacts")
 def list_company_contacts(company_id: str, request: Request):
@@ -3876,7 +3943,7 @@ def iso30414_report(request: Request):
                 "hours_per_employee": round(total_time / 3600 / max(total_users, 1), 1),
             },
             "area_3_diversity": {
-                "note": "تنوع نیروی کار — نیاز به داده‌های دموگرافیک",
+                "note": "تنوع نیروی کار — نیاز به دادههای دموگرافیک",
             },
             "area_4_leadership": {
                 "managers_count": con.execute("SELECT COUNT(*) FROM users WHERE role IN ('ADMIN','CEO') AND active=1").fetchone()[0],
@@ -3889,7 +3956,7 @@ def iso30414_report(request: Request):
             },
             "area_6_health_safety": {
                 "pending_leave_requests": leave_pending,
-                "note": "سلامت و ایمنی — نیاز به داده‌های غیبت",
+                "note": "سلامت و ایمنی — نیاز به دادههای غیبت",
             },
             "area_7_productivity": {
                 "tasks_completed": approved,
@@ -3899,7 +3966,7 @@ def iso30414_report(request: Request):
                 "productivity_ratio": round(approved / max(total_tasks, 1) * 100, 1),
             },
             "area_8_training": {
-                "note": "آموزش و توسعه — نیاز به ثبت داده‌های آموزش",
+                "note": "آموزش و توسعه — نیاز به ثبت دادههای آموزش",
             },
             "area_9_recruitment": {
                 "note": "جذب و استخدام — خارج از دامنه فعلی",
@@ -4123,7 +4190,7 @@ def delegate_performance(entry_id: str, payload: PerformanceDelegateModel, reque
         if not entry:
             raise HTTPException(404, "گزارش عملکرد پیدا نشد")
         if entry["user_id"] != user["id"] and user["role"] not in ("ADMIN", "CEO"):
-            raise HTTPException(403, "فقط صاحب گزارش می‌تواند ارجاع دهد")
+            raise HTTPException(403, "فقط صاحب گزارش میتواند ارجاع دهد")
         target = con.execute("SELECT id FROM users WHERE id=? AND active=1", (payload.to_user,)).fetchone()
         if not target:
             raise HTTPException(404, "کاربر هدف پیدا نشد")
@@ -5130,7 +5197,7 @@ import tempfile
 import urllib.request
 import subprocess
 
-SYSTEM_VERSION = "0.3.0.07"
+SYSTEM_VERSION = "0.3.0.08"
 SYSTEM_REPO_URL = "https://github.com/glcco9819-lang/yafgtax.git"
 SYSTEM_UPDATE_DIR = ROOT / "updates"  # temporary download location
 SYSTEM_BACKUP_DIR = DATA / "backups"
@@ -5258,7 +5325,7 @@ def system_update(request: Request, source: str = "github", branch: str = "main"
         except Exception as e:
             return {"ok": False, "error": f"دانلود ناموفق: {e}"}
     else:
-        return {"ok": False, "error": "منبع نامعتبر (فقط 'github' پشتیبانی می‌شود)"}
+        return {"ok": False, "error": "منبع نامعتبر (فقط 'github' پشتیبانی میشود)"}
     
     # Step 3: Extract
     temp_dir = Path(tempfile.mkdtemp(prefix="yfg_update_"))
@@ -5346,7 +5413,7 @@ def system_update(request: Request, source: str = "github", branch: str = "main"
         "new_version": new_version,
         "backup_file": auto_backup_name,
         "updated_files": updated_files,
-        "message": f"به‌روزرسانی از {source}:{branch} انجام شد. {len(updated_files)} فایل آپدیت شد. سرور باید ری‌استارت شود.",
+        "message": f"بهروزرسانی از {source}:{branch} انجام شد. {len(updated_files)} فایل آپدیت شد. سرور باید ریاستارت شود.",
         "restart_required": True,
     }
 
@@ -5431,7 +5498,7 @@ async def system_update_upload(request: Request, file: UploadFile = File(...)):
         "new_version": new_version,
         "backup_file": auto_backup_name,
         "updated_files": updated_files,
-        "message": f"به‌روزرسانی از فایل آپلودی انجام شد. {len(updated_files)} فایل آپدیت شد. سرور باید ری‌استارت شود.",
+        "message": f"بهروزرسانی از فایل آپلودی انجام شد. {len(updated_files)} فایل آپدیت شد. سرور باید ریاستارت شود.",
         "restart_required": True,
     }
 
@@ -5455,7 +5522,7 @@ def system_restart(request: Request):
     
     return {
         "ok": True,
-        "message": "سرور در حال ری‌استارت است. لطفاً ۵ ثانیه صبر کنید و سپس صفحه را رفرش کنید.",
+        "message": "سرور در حال ریاستارت است. لطفاً ۵ ثانیه صبر کنید و سپس صفحه را رفرش کنید.",
     }
 
 
@@ -5586,7 +5653,7 @@ def list_tax_deadline_types(request: Request):
 STAFF_ROLES = {
     'lead': 'سرپرست',
     'accountant': 'حسابدار',
-    'assistant': 'کمک‌حسابدار',
+    'assistant': 'کمکحسابدار',
 }
 
 class CompanyStaffModel(BaseModel):
@@ -5647,10 +5714,10 @@ FEE_TYPES = {
     'quarterly': 'فصلی',
     'annual': 'سالانه',
     'hourly': 'ساعتی',
-    'one_time': 'یک‌باره',
+    'one_time': 'یکباره',
 }
 FEE_STATUS = {
-    'UNPAID': {'label': 'پرداخت‌نشده', 'color': '#ef4444', 'bg': '#fee2e2'},
+    'UNPAID': {'label': 'پرداختنشده', 'color': '#ef4444', 'bg': '#fee2e2'},
     'PARTIAL': {'label': 'پرداخت جزئی', 'color': '#f59e0b', 'bg': '#fef3c7'},
     'PAID': {'label': 'تسویه شد', 'color': '#10b981', 'bg': '#d1fae5'},
     'OVERDUE': {'label': 'سررسید گذشته', 'color': '#dc2626', 'bg': '#fee2e2'},
@@ -5784,7 +5851,7 @@ def fees_summary(request: Request):
 # PHASE 1: MOUDIAN SYSTEM API (سامانه مودیان — فاکتور الکترونیکی)
 # ========================================================================
 MOUDIAN_STATUS = {
-    'DRAFT': {'label': 'پیش‌نویس', 'color': '#94a3b8', 'bg': '#f1f5f9'},
+    'DRAFT': {'label': 'پیشنویس', 'color': '#94a3b8', 'bg': '#f1f5f9'},
     'PENDING': {'label': 'در انتظار', 'color': '#f59e0b', 'bg': '#fef3c7'},
     'SENT': {'label': 'ارسال شد', 'color': '#3b82f6', 'bg': '#dbeafe'},
     'ACCEPTED': {'label': 'تأیید شد', 'color': '#10b981', 'bg': '#d1fae5'},
@@ -5894,7 +5961,7 @@ def submit_moudian_invoice(invoice_id: str, request: Request):
         existing = con.execute("SELECT * FROM moudian_invoices WHERE id=?", (invoice_id,)).fetchone()
         if not existing: raise HTTPException(404, "فاکتور مودیان پیدا نشد")
         if existing["status"] not in ('DRAFT', 'REJECTED'):
-            raise HTTPException(400, "فقط فاکتورهای پیش‌نویس یا ردشده قابل ارسال هستند")
+            raise HTTPException(400, "فقط فاکتورهای پیشنویس یا ردشده قابل ارسال هستند")
         # Mock submission — in real implementation, this would call the Moudian API
         ref_id = f"MOU-{uid()[:12].upper()}"
         con.execute("UPDATE moudian_invoices SET status='SENT', reference_id=?, submitted_at=?, updated_at=? WHERE id=?",
@@ -5909,3 +5976,349 @@ def delete_moudian_invoice(invoice_id: str, request: Request):
         con.execute("DELETE FROM moudian_invoices WHERE id=?", (invoice_id,))
     return {"ok": True}
 
+
+
+# ========================================================================
+# PHASE 2: CLIENT PORTAL API (پرتال مشتری)
+# ========================================================================
+class ClientPortalUserCreateModel(BaseModel):
+    company_id: str
+    person_id: str | None = None
+    username: str
+    password: str
+    display_name: str = ""
+    email: str = ""
+    phone: str = ""
+
+@app.get("/api/portal/users")
+def list_portal_users(request: Request, company_id: str = ""):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    with db() as con:
+        sql = """SELECT pu.*, c.name AS company_name, p.first_name, p.last_name
+                 FROM client_portal_users pu
+                 LEFT JOIN companies c ON c.id=pu.company_id
+                 LEFT JOIN persons p ON p.id=pu.person_id WHERE 1=1"""
+        params = []
+        if company_id:
+            sql += " AND pu.company_id=?"
+            params.append(company_id)
+        sql += " ORDER BY pu.created_at DESC"
+        rows = con.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+@app.post("/api/portal/users")
+def create_portal_user(payload: ClientPortalUserCreateModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    if len(payload.password) < 4:
+        raise HTTPException(400, "رمز حداقل ۴ نویسه")
+    pid = uid()
+    with db() as con:
+        try:
+            con.execute("""INSERT INTO client_portal_users
+                (id, company_id, person_id, username, password_hash, display_name, email, phone, active, created_by, created_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                (pid, payload.company_id, payload.person_id, payload.username.lower(),
+                 password_hash(payload.password), payload.display_name, payload.email, payload.phone,
+                 1, user["id"], now()))
+        except Exception as e:
+            if "UNIQUE" in str(e): raise HTTPException(400, "نام کاربری تکراری")
+            raise
+    return {"id": pid}
+
+@app.delete("/api/portal/users/{portal_user_id}")
+def delete_portal_user(portal_user_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    with db() as con:
+        con.execute("DELETE FROM client_portal_users WHERE id=?", (portal_user_id,))
+    return {"ok": True}
+
+@app.post("/api/portal/login")
+def portal_login(payload: LoginModel, request: Request):
+    """Login for client portal users."""
+    with db() as con:
+        pu = con.execute("SELECT * FROM client_portal_users WHERE username=? AND active=1", (payload.username.lower(),)).fetchone()
+        if pu is None or not password_ok(payload.password, pu["password_hash"]):
+            raise HTTPException(401, "نام کاربری یا رمز نادرست")
+        con.execute("UPDATE client_portal_users SET last_login=? WHERE id=?", (now(), pu["id"]))
+        company = con.execute("SELECT name FROM companies WHERE id=?", (pu["company_id"],)).fetchone()
+        return {"ok": True, "user": {"id": pu["id"], "display_name": pu["display_name"] or pu["username"], "company_id": pu["company_id"], "company_name": company["name"] if company else ""}}
+
+@app.get("/api/portal/invoices")
+def portal_invoices(request: Request, company_id: str = ""):
+    """Client portal: view their invoices."""
+    with db() as con:
+        rows = con.execute("""SELECT i.*, c.name AS company_name FROM invoices i
+            LEFT JOIN companies c ON c.id=i.company_id
+            WHERE i.company_id=? ORDER BY i.issue_date DESC""", (company_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+@app.get("/api/portal/fees")
+def portal_fees(request: Request, company_id: str = ""):
+    """Client portal: view their fees/receivables."""
+    with db() as con:
+        rows = con.execute("""SELECT f.*, c.name AS company_name FROM fees f
+            LEFT JOIN companies c ON c.id=f.company_id
+            WHERE f.company_id=? ORDER BY f.issue_date DESC""", (company_id,)).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["balance"] = float(d["amount"]) - float(d["paid_amount"])
+            result.append(d)
+        return result
+
+@app.get("/api/portal/tax-deadlines")
+def portal_tax_deadlines(request: Request, company_id: str = ""):
+    """Client portal: view upcoming tax deadlines."""
+    with db() as con:
+        rows = con.execute("""SELECT td.* FROM tax_deadlines td
+            WHERE td.company_id=? ORDER BY td.due_date ASC""", (company_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+
+# ========================================================================
+# PHASE 2: DOCUMENT MANAGEMENT API (مدیریت اسناد)
+# ========================================================================
+DOC_CATEGORIES = {
+    'general': 'عمومی', 'contract': 'قرارداد', 'invoice': 'فاکتور',
+    'tax': 'مالیاتی', 'audit': 'حسابرسی', 'bank': 'بانکی', 'other': 'سایر',
+}
+
+class DocumentUploadModel(BaseModel):
+    company_id: str
+    category: str = "general"
+    title: str
+    description: str = ""
+    tags: str = ""
+
+@app.get("/api/documents")
+def list_documents(request: Request, company_id: str = "", category: str = "", q: str = ""):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        sql = """SELECT d.*, c.name AS company_name, u.name AS uploaded_by_name
+                 FROM documents d LEFT JOIN companies c ON c.id=d.company_id
+                 LEFT JOIN users u ON u.id=d.uploaded_by WHERE 1=1"""
+        params = []
+        if company_id:
+            sql += " AND d.company_id=?"
+            params.append(company_id)
+        if category:
+            sql += " AND d.category=?"
+            params.append(category)
+        if q:
+            sql += " AND (d.title LIKE ? OR d.description LIKE ? OR d.tags LIKE ?)"
+            kw = f"%{q}%"
+            params.extend([kw, kw, kw])
+        sql += " ORDER BY d.uploaded_at DESC"
+        rows = con.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+@app.post("/api/documents/upload")
+async def upload_document(request: Request, file: UploadFile = File(...),
+    company_id: str = Form(...), category: str = Form("general"),
+    title: str = Form(...), description: str = Form(""), tags: str = Form("")):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    content_bytes = await file.read(MAX_UPLOAD + 1)
+    if len(content_bytes) > MAX_UPLOAD:
+        raise HTTPException(413, "حجم فایل بیش از حد مجاز")
+    if not file.filename:
+        raise HTTPException(400, "نام فایل نامعتبر")
+    doc_id = uid()
+    stored_name = f"{doc_id}_{file.filename}"
+    doc_dir = DATA / "documents"
+    doc_dir.mkdir(parents=True, exist_ok=True)
+    (doc_dir / stored_name).write_bytes(content_bytes)
+    sha = hashlib.sha256(content_bytes).hexdigest()
+    with db() as con:
+        con.execute("""INSERT INTO documents
+            (id, company_id, category, title, description, file_name, stored_name, file_size, mime_type, sha256, version, parent_id, uploaded_by, uploaded_at, tags)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (doc_id, company_id, category, title, description, file.filename, stored_name,
+             len(content_bytes), file.content_type or "application/octet-stream", sha, 1, None,
+             user["id"], now(), tags))
+    return {"id": doc_id, "file_name": file.filename, "size": len(content_bytes)}
+
+@app.get("/api/documents/{doc_id}/download")
+def download_document(doc_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        doc = con.execute("SELECT * FROM documents WHERE id=?", (doc_id,)).fetchone()
+        if not doc: raise HTTPException(404, "سند پیدا نشد")
+        path = DATA / "documents" / doc["stored_name"]
+        if not path.exists(): raise HTTPException(404, "فایل پیدا نشد")
+        return FileResponse(str(path), filename=doc["file_name"], media_type=doc["mime_type"])
+
+@app.delete("/api/documents/{doc_id}")
+def delete_document(doc_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    with db() as con:
+        doc = con.execute("SELECT * FROM documents WHERE id=?", (doc_id,)).fetchone()
+        if not doc: raise HTTPException(404, "سند پیدا نشد")
+        path = DATA / "documents" / doc["stored_name"]
+        if path.exists(): path.unlink()
+        con.execute("DELETE FROM documents WHERE id=?", (doc_id,))
+    return {"ok": True}
+
+
+# ========================================================================
+# PHASE 2: E-SIGNATURE API (امضای الکترونیکی)
+# ========================================================================
+class SignatureModel(BaseModel):
+    document_id: str
+    signer_name: str
+    signature_text: str  # typed name or base64 image
+
+@app.get("/api/documents/{doc_id}/signatures")
+def list_signatures(doc_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        rows = con.execute("SELECT * FROM document_signatures WHERE document_id=? ORDER BY signed_at DESC", (doc_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+@app.post("/api/documents/{doc_id}/sign")
+def sign_document(doc_id: str, payload: SignatureModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        doc = con.execute("SELECT * FROM documents WHERE id=?", (doc_id,)).fetchone()
+        if not doc: raise HTTPException(404, "سند پیدا نشد")
+        sig_id = uid()
+        sig_hash = hashlib.sha256(f"{payload.signer_name}:{payload.signature_text}:{doc_id}:{now()}".encode()).hexdigest()
+        con.execute("INSERT INTO document_signatures VALUES(?,?,?,?,?,?,?,?)",
+                    (sig_id, doc_id, "internal", user["id"], payload.signer_name,
+                     payload.signature_text, sig_hash, now(), request.client.host if request.client else ""))
+    return {"id": sig_id, "signature_hash": sig_hash, "signed_at": now()}
+
+
+# ========================================================================
+# PHASE 2: RECURRING TASK TEMPLATES API (قالب‌های کار تکرارپذیر)
+# ========================================================================
+class TaskTemplateCreateModel(BaseModel):
+    name: str
+    description: str = ""
+    company_id: str | None = None
+    task_type: str = "ثبت اسناد"
+    priority: str = "NORMAL"
+    weight: int = 1
+    scope: str = ""
+    frequency: str = "monthly"
+    day_of_month: int | None = None
+    day_of_week: int | None = None
+    assignee_id: str | None = None
+
+class TaskTemplateUpdateModel(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    company_id: str | None = None
+    task_type: str | None = None
+    priority: str | None = None
+    weight: int | None = None
+    scope: str | None = None
+    frequency: str | None = None
+    day_of_month: int | None = None
+    day_of_week: int | None = None
+    assignee_id: str | None = None
+    active: int | None = None
+
+TEMPLATE_FREQUENCIES = {
+    'daily': 'روزانه', 'weekly': 'هفتگی', 'monthly': 'ماهانه',
+    'quarterly': 'فصلی', 'annual': 'سالانه',
+}
+
+@app.get("/api/task-templates")
+def list_task_templates(request: Request, company_id: str = ""):
+    user = current_user(request)
+    require_perm(user, "tasks.view")
+    with db() as con:
+        sql = """SELECT tt.*, c.name AS company_name, u.name AS assignee_name
+                 FROM task_templates tt
+                 LEFT JOIN companies c ON c.id=tt.company_id
+                 LEFT JOIN users u ON u.id=tt.assignee_id WHERE 1=1"""
+        params = []
+        if company_id:
+            sql += " AND (tt.company_id=? OR tt.company_id IS NULL)"
+            params.append(company_id)
+        sql += " ORDER BY tt.created_at DESC"
+        rows = con.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+@app.post("/api/task-templates")
+def create_task_template(payload: TaskTemplateCreateModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "tasks.create")
+    tid = uid()
+    ts = now()
+    with db() as con:
+        con.execute("""INSERT INTO task_templates
+            (id, name, description, company_id, task_type, priority, weight, scope, frequency,
+             day_of_month, day_of_week, assignee_id, active, created_by, created_at, updated_at, last_generated)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (tid, payload.name, payload.description, payload.company_id, payload.task_type,
+             payload.priority, payload.weight, payload.scope, payload.frequency,
+             payload.day_of_month, payload.day_of_week, payload.assignee_id, 1,
+             user["id"], ts, ts, None))
+    return {"id": tid}
+
+@app.patch("/api/task-templates/{template_id}")
+def update_task_template(template_id: str, payload: TaskTemplateUpdateModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "tasks.create")
+    with db() as con:
+        existing = con.execute("SELECT * FROM task_templates WHERE id=?", (template_id,)).fetchone()
+        if not existing: raise HTTPException(404, "قالب پیدا نشد")
+        updates = []
+        params = []
+        for k, v in payload.model_dump(exclude_unset=True).items():
+            if v is None: continue
+            updates.append(f"{k}=?")
+            params.append(v)
+        if not updates: return {"ok": True, "updated": 0}
+        updates.append("updated_at=?")
+        params.append(now())
+        params.append(template_id)
+        con.execute(f"UPDATE task_templates SET {', '.join(updates)} WHERE id=?", params)
+    return {"ok": True, "updated": len(updates)-1}
+
+@app.delete("/api/task-templates/{template_id}")
+def delete_task_template(template_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "tasks.create")
+    with db() as con:
+        con.execute("DELETE FROM task_templates WHERE id=?", (template_id,))
+    return {"ok": True}
+
+@app.post("/api/task-templates/{template_id}/generate")
+def generate_task_from_template(template_id: str, request: Request):
+    """Manually generate a task from a template."""
+    user = current_user(request)
+    require_perm(user, "tasks.create")
+    with db() as con:
+        template = con.execute("SELECT * FROM task_templates WHERE id=? AND active=1", (template_id,)).fetchone()
+        if not template: raise HTTPException(404, "قالب پیدا نشد یا غیرفعال است")
+        if not template["company_id"]:
+            raise HTTPException(400, "این قالب برای همه شرکت‌هاست — شرکت خاصی را انتخاب کنید")
+        if not template["assignee_id"]:
+            raise HTTPException(400, "قالب فاقد مسئول است")
+        task_id = uid()
+        ts = now()
+        # Calculate due date based on frequency
+        from datetime import timedelta
+        due = (datetime.now() + timedelta(days={'daily':1,'weekly':7,'monthly':30,'quarterly':90,'annual':365}.get(template["frequency"], 30))).isoformat()
+        con.execute("""INSERT INTO tasks
+            (id, company_id, title, description, fiscal_period, scope, priority, weight,
+             due_date, status, progress, parent_task_id, reference_version_id,
+             assignee_id, created_by, created_at, updated_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (task_id, template["company_id"], template["name"], template["description"],
+             '', template["scope"], template["priority"], template["weight"],
+             due, 'ASSIGNED', 0, None, None,
+             template["assignee_id"], user["id"], ts, ts))
+        con.execute("UPDATE task_templates SET last_generated=? WHERE id=?", (ts, template_id))
+    return {"id": task_id, "due_date": due}

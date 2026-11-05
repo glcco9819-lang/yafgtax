@@ -1,5 +1,5 @@
-// YFG Service Worker v20 — version 0.3.0.07 — Phase 1: tax deadlines + staff + fees + moudian
-const CACHE='yfg-desk-v20';
+// YFG Service Worker v21 — version 0.3.0.08 — Phase 2: portal + docs + e-sign + templates
+const CACHE='yfg-desk-v21';
 const ASSETS=['/','/static/style.css','/static/themes.css','/static/app.js','/static/performance.js','/static/enhanced.js','/static/themes.js','/static/icon.svg','/static/icon-192.png','/static/icon-512.png','/manifest.webmanifest'];
 
 self.addEventListener('install', e => e.waitUntil(
