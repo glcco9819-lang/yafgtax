@@ -1477,7 +1477,7 @@ def service_worker():
 @app.get("/api/status")
 def status():
     with db() as con:
-        return {"setup_needed": con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0, "product": "YFG Accounting Desk", "version": "0.3.0.08"}
+        return {"setup_needed": con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0, "product": "YFG Accounting Desk", "version": "0.3.0.09"}
 
 
 @app.post("/api/setup")
@@ -5197,7 +5197,7 @@ import tempfile
 import urllib.request
 import subprocess
 
-SYSTEM_VERSION = "0.3.0.08"
+SYSTEM_VERSION = "0.3.0.09"
 SYSTEM_REPO_URL = "https://github.com/glcco9819-lang/yafgtax.git"
 SYSTEM_UPDATE_DIR = ROOT / "updates"  # temporary download location
 SYSTEM_BACKUP_DIR = DATA / "backups"
@@ -6322,3 +6322,257 @@ def generate_task_from_template(template_id: str, request: Request):
              template["assignee_id"], user["id"], ts, ts))
         con.execute("UPDATE task_templates SET last_generated=? WHERE id=?", (ts, template_id))
     return {"id": task_id, "due_date": due}
+
+
+# ========================================================================
+# PHASE 3: ADVANCED DASHBOARD (داشبورد پیشرفته)
+# ========================================================================
+@app.get("/api/dashboard/advanced")
+def advanced_dashboard(request: Request):
+    """Advanced dashboard with financial trends, revenue forecast, workload analysis."""
+    user = current_user(request)
+    require_perm(user, "dashboard.view")
+    with db() as con:
+        # Revenue trend (last 6 months from fees)
+        revenue_rows = con.execute("""SELECT
+            strftime('%Y-%m', issue_date) AS month,
+            SUM(amount) AS total_billed,
+            SUM(paid_amount) AS total_paid
+            FROM fees WHERE status!='CANCELLED' AND issue_date >= date('now', '-6 months')
+            GROUP BY month ORDER BY month DESC LIMIT 6""").fetchall()
+        revenue_trend = [dict(r) for r in revenue_rows]
+
+        # Outstanding by company
+        outstanding_rows = con.execute("""SELECT
+            c.name AS company_name,
+            COUNT(f.id) AS fee_count,
+            SUM(f.amount - f.paid_amount) AS outstanding
+            FROM fees f JOIN companies c ON c.id=f.company_id
+            WHERE f.status IN ('UNPAID','PARTIAL','OVERDUE')
+            GROUP BY c.id ORDER BY outstanding DESC LIMIT 10""").fetchall()
+        outstanding_by_company = [dict(r) for r in outstanding_rows]
+
+        # Tax deadline summary
+        today = now()[:10]
+        upcoming_tax = con.execute("""SELECT COUNT(*) FROM tax_deadlines
+            WHERE status='PENDING' AND due_date >= ?""", (today,)).fetchone()[0]
+        overdue_tax = con.execute("""SELECT COUNT(*) FROM tax_deadlines
+            WHERE status='PENDING' AND due_date < ?""", (today,)).fetchone()[0]
+
+        # Task workload per employee
+        workload = con.execute("""SELECT
+            u.name AS employee_name,
+            COUNT(t.id) AS total_tasks,
+            SUM(CASE WHEN t.status='ASSIGNED' THEN 1 ELSE 0 END) AS assigned,
+            SUM(CASE WHEN t.status IN ('SUBMITTED','NEEDS_REVIEW') THEN 1 ELSE 0 END) AS in_review,
+            SUM(CASE WHEN t.status IN ('APPROVED','APPROVED_WITH_EXCEPTION') THEN 1 ELSE 0 END) AS completed,
+            SUM(CASE WHEN t.due_date < ? AND t.status NOT IN ('APPROVED','APPROVED_WITH_EXCEPTION','CANCELLED') THEN 1 ELSE 0 END) AS overdue
+            FROM users u LEFT JOIN tasks t ON t.assignee_id=u.id
+            WHERE u.active=1 AND u.role='EMPLOYEE'
+            GROUP BY u.id ORDER BY total_tasks DESC""", (today,)).fetchall()
+        task_workload = [dict(r) for r in workload]
+
+        # Moudian summary
+        moudian_stats = con.execute("""SELECT
+            COUNT(*) AS total,
+            SUM(CASE WHEN status='DRAFT' THEN 1 ELSE 0 END) AS draft,
+            SUM(CASE WHEN status='SENT' THEN 1 ELSE 0 END) AS sent,
+            SUM(CASE WHEN status='ACCEPTED' THEN 1 ELSE 0 END) AS accepted,
+            SUM(CASE WHEN status='REJECTED' THEN 1 ELSE 0 END) AS rejected,
+            SUM(payable_amount) AS total_payable
+            FROM moudian_invoices""").fetchone()
+        moudian_summary = dict(moudian_stats) if moudian_stats else {}
+
+        # Company distribution
+        company_count = con.execute("SELECT COUNT(*) FROM companies WHERE active=1").fetchone()[0]
+        person_count = con.execute("SELECT COUNT(*) FROM persons WHERE active=1").fetchone()[0]
+        contract_active = con.execute("SELECT COUNT(*) FROM contracts WHERE status='ACTIVE'").fetchone()[0]
+
+        # Monthly forecast (simple: average of last 3 months * 1.1)
+        recent_revenue = revenue_rows[:3] if len(revenue_rows) >= 3 else revenue_rows
+        avg_revenue = sum(float(r["total_billed"]) for r in recent_revenue) / max(len(recent_revenue), 1)
+        forecast = avg_revenue * 1.1
+
+        return {
+            "revenue_trend": revenue_trend,
+            "outstanding_by_company": outstanding_by_company,
+            "tax_summary": {"upcoming": upcoming_tax, "overdue": overdue_tax},
+            "task_workload": task_workload,
+            "moudian_summary": moudian_summary,
+            "company_count": company_count,
+            "person_count": person_count,
+            "contract_active": contract_active,
+            "forecast_next_month": round(forecast, 0),
+        }
+
+
+# ========================================================================
+# PHASE 3: PWA + PUSH NOTIFICATIONS
+# ========================================================================
+import json as _json
+
+@app.get("/api/notifications/unread-count")
+def unread_notification_count(request: Request):
+    """Returns count of unread notifications for the current user."""
+    user = current_user(request)
+    with db() as con:
+        count = con.execute("SELECT COUNT(*) FROM notifications WHERE user_id=? AND read_at IS NULL", (user["id"],)).fetchone()[0]
+        return {"unread": count}
+
+@app.post("/api/notifications/{notif_id}/read")
+def mark_notification_read(notif_id: str, request: Request):
+    """Mark a single notification as read."""
+    user = current_user(request)
+    with db() as con:
+        con.execute("UPDATE notifications SET read_at=? WHERE id=? AND user_id=?", (now(), notif_id, user["id"]))
+    return {"ok": True}
+
+@app.post("/api/notifications/mark-all-read")
+def mark_all_notifications_read(request: Request):
+    """Mark all notifications as read for current user."""
+    user = current_user(request)
+    with db() as con:
+        con.execute("UPDATE notifications SET read_at=? WHERE user_id=? AND read_at IS NULL", (now(), user["id"]))
+    return {"ok": True}
+
+@app.get("/api/notifications/recent")
+def recent_notifications(request: Request, limit: int = 20):
+    """Returns recent notifications with read status."""
+    user = current_user(request)
+    with db() as con:
+        rows = con.execute("""SELECT n.*, CASE WHEN n.read_at IS NOT NULL THEN 1 ELSE 0 END AS is_read
+            FROM notifications n WHERE n.user_id=?
+            ORDER BY n.created_at DESC LIMIT ?""", (user["id"], limit)).fetchall()
+        return [dict(r) for r in rows]
+
+
+# ========================================================================
+# PHASE 3: CALENDAR SYNC (تقویم)
+# ========================================================================
+@app.get("/api/calendar/events")
+def calendar_events(request: Request, company_id: str = "", start: str = "", end: str = ""):
+    """Returns calendar events (tax deadlines, task due dates, contract dates) in iCal-like format."""
+    user = current_user(request)
+    require_perm(user, "dashboard.view")
+    events = []
+    with db() as con:
+        # Tax deadlines
+        td_sql = "SELECT * FROM tax_deadlines WHERE status='PENDING'"
+        td_params = []
+        if company_id:
+            td_sql += " AND company_id=?"
+            td_params.append(company_id)
+        if start:
+            td_sql += " AND due_date >= ?"
+            td_params.append(start)
+        if end:
+            td_sql += " AND due_date <= ?"
+            td_params.append(end)
+        td_rows = con.execute(td_sql, td_params).fetchall()
+        for td in td_rows:
+            comp = con.execute("SELECT name FROM companies WHERE id=?", (td["company_id"],)).fetchone()
+            events.append({
+                "id": f"tax_{td['id']}",
+                "type": "tax_deadline",
+                "title": f"📅 {td['title']}",
+                "date": td["due_date"],
+                "company": comp["name"] if comp else "",
+                "status": td["status"],
+            })
+        # Task due dates
+        task_sql = "SELECT t.*, c.name AS company_name FROM tasks t LEFT JOIN companies c ON c.id=t.company_id WHERE t.status NOT IN ('APPROVED','APPROVED_WITH_EXCEPTION','CANCELLED')"
+        task_params = []
+        if company_id:
+            task_sql += " AND t.company_id=?"
+            task_params.append(company_id)
+        if start:
+            task_sql += " AND t.due_date >= ?"
+            task_params.append(start)
+        if end:
+            task_sql += " AND t.due_date <= ?"
+            task_params.append(end)
+        task_rows = con.execute(task_sql, task_params).fetchall()
+        for t in task_rows:
+            events.append({
+                "id": f"task_{t['id']}",
+                "type": "task_due",
+                "title": f"✓ {t['title']}",
+                "date": t["due_date"],
+                "company": t["company_name"] or "",
+                "status": t["status"],
+            })
+        # Contract end dates
+        contract_rows = con.execute("SELECT * FROM contracts WHERE status='ACTIVE' AND end_date >= ?", (start or "2000-01-01",)).fetchall()
+        for c in contract_rows:
+            if company_id and c["company_id"] != company_id:
+                continue
+            events.append({
+                "id": f"contract_{c['id']}",
+                "type": "contract_end",
+                "title": f"📜 پایان قرارداد: {c['title']}",
+                "date": c["end_date"],
+                "status": "ACTIVE",
+            })
+    events.sort(key=lambda e: e.get("date") or "")
+    return events
+
+@app.get("/api/calendar/export")
+def calendar_export(request: Request, company_id: str = ""):
+    """Export calendar as iCal (.ics) format."""
+    user = current_user(request)
+    require_perm(user, "dashboard.view")
+    events = calendar_events(request, company_id)
+    ics_lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//YFG Accounting Desk//Calendar//FA",
+                 "CALSCALE:GREGORIAN", "METHOD:PUBLISH"]
+    for e in events:
+        date_str = e.get("date", "")
+        if not date_str or len(date_str) < 10:
+            continue
+        d = date_str[:10].replace("-", "")
+        uid_ics = e.get("id", "")
+        title = e.get("title", "").replace(",", "\\,").replace(";", "\\;").replace("\n", "\\n")
+        ics_lines.extend([
+            "BEGIN:VEVENT",
+            f"UID:{uid_ics}@yfg-desk",
+            f"DTSTART;VALUE=DATE:{d}",
+            f"DTEND;VALUE=DATE:{d}",
+            f"SUMMARY:{title}",
+            f"DESCRIPTION:نوع: {e.get('type','')} - شرکت: {e.get('company','')}",
+            "END:VEVENT",
+        ])
+    ics_lines.append("END:VCALENDAR")
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse("\r\n".join(ics_lines), media_type="text/calendar", headers={"Content-Disposition": "attachment; filename=yfg-calendar.ics"})
+
+
+# ========================================================================
+# PHASE 3: ENHANCED NOTIFICATIONS (نوتیفیکیشن چندکاناله)
+# ========================================================================
+class NotificationPreferenceModel(BaseModel):
+    channel: str  # in_app, email, push
+    enabled: bool = True
+    categories: list[str] = []  # which notification types to receive
+
+@app.get("/api/notifications/preferences")
+def get_notification_preferences(request: Request):
+    """Get notification preferences for current user."""
+    user = current_user(request)
+    # Return defaults if not stored
+    return {
+        "in_app": True,
+        "email": False,
+        "push": False,
+        "categories": ["task", "request", "chat", "deadline", "system"],
+    }
+
+@app.post("/api/notifications/send")
+def send_custom_notification(request: Request, title: str = "", body: str = "", target_user_id: str = ""):
+    """Send a notification to a specific user (admin only)."""
+    user = current_user(request)
+    if user["role"] not in ("ADMIN", "CEO"):
+        raise HTTPException(403, "فقط مدیر می‌تواند اعلان ارسال کند")
+    if not title or not target_user_id:
+        raise HTTPException(400, "عنوان و کاربر هدف الزامی است")
+    with db() as con:
+        notify(con, target_user_id, title, body)
+    return {"ok": True}
