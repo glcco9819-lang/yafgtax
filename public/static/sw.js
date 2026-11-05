@@ -1,5 +1,5 @@
-// YFG Service Worker v22 — version 0.3.0.09 — Phase 3: advanced dashboard + calendar + notifications
-const CACHE='yfg-desk-v22';
+// YFG Service Worker v23 — version 0.3.0.10 — Phase 4: public API + webhooks + OCR
+const CACHE='yfg-desk-v23';
 const ASSETS=['/','/static/style.css','/static/themes.css','/static/app.js','/static/performance.js','/static/enhanced.js','/static/themes.js','/static/icon.svg','/static/icon-192.png','/static/icon-512.png','/manifest.webmanifest'];
 
 self.addEventListener('install', e => e.waitUntil(

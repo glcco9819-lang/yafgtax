@@ -1477,7 +1477,7 @@ def service_worker():
 @app.get("/api/status")
 def status():
     with db() as con:
-        return {"setup_needed": con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0, "product": "YFG Accounting Desk", "version": "0.3.0.09"}
+        return {"setup_needed": con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0, "product": "YFG Accounting Desk", "version": "0.3.0.10"}
 
 
 @app.post("/api/setup")
@@ -5197,7 +5197,7 @@ import tempfile
 import urllib.request
 import subprocess
 
-SYSTEM_VERSION = "0.3.0.09"
+SYSTEM_VERSION = "0.3.0.10"
 SYSTEM_REPO_URL = "https://github.com/glcco9819-lang/yafgtax.git"
 SYSTEM_UPDATE_DIR = ROOT / "updates"  # temporary download location
 SYSTEM_BACKUP_DIR = DATA / "backups"
@@ -6576,3 +6576,188 @@ def send_custom_notification(request: Request, title: str = "", body: str = "", 
     with db() as con:
         notify(con, target_user_id, title, body)
     return {"ok": True}
+
+
+# ========================================================================
+# PHASE 4: PUBLIC API + WEBHOOKS (API عمومی)
+# ========================================================================
+from fastapi import Header
+
+API_KEYS_TABLE = """CREATE TABLE IF NOT EXISTS api_keys(
+ id TEXT PRIMARY KEY,
+ key_hash TEXT NOT NULL UNIQUE,
+ name TEXT NOT NULL,
+ user_id TEXT NOT NULL REFERENCES users(id),
+ scopes TEXT NOT NULL DEFAULT 'read',
+ active INTEGER NOT NULL DEFAULT 1,
+ created_at TEXT NOT NULL,
+ last_used TEXT
+);"""
+
+# Add to DB
+with db() as con:
+    con.executescript(API_KEYS_TABLE)
+
+WEBHOOKS_TABLE = """CREATE TABLE IF NOT EXISTS webhooks(
+ id TEXT PRIMARY KEY,
+ url TEXT NOT NULL,
+ event_type TEXT NOT NULL,
+ active INTEGER NOT NULL DEFAULT 1,
+ secret TEXT NOT NULL DEFAULT '',
+ created_by TEXT NOT NULL REFERENCES users(id),
+ created_at TEXT NOT NULL
+);"""
+
+with db() as con:
+    con.executescript(WEBHOOKS_TABLE)
+
+class APIKeyCreateModel(BaseModel):
+    name: str
+    scopes: str = "read"
+
+@app.get("/api/api-keys")
+def list_api_keys(request: Request):
+    user = current_user(request)
+    if user["role"] != "ADMIN": raise HTTPException(403, "فقط مدیر")
+    with db() as con:
+        rows = con.execute("SELECT id, name, scopes, active, created_at, last_used FROM api_keys WHERE user_id=?", (user["id"],)).fetchall()
+        return [dict(r) for r in rows]
+
+@app.post("/api/api-keys")
+def create_api_key(payload: APIKeyCreateModel, request: Request):
+    user = current_user(request)
+    if user["role"] != "ADMIN": raise HTTPException(403, "فقط مدیر")
+    raw_key = secrets.token_urlsafe(32)
+    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+    kid = uid()
+    with db() as con:
+        con.execute("INSERT INTO api_keys VALUES(?,?,?,?,?,?,?,?)",
+                    (kid, key_hash, payload.name, user["id"], payload.scopes, 1, now(), None))
+    return {"id": kid, "key": raw_key, "name": payload.name}
+
+@app.delete("/api/api-keys/{key_id}")
+def revoke_api_key(key_id: str, request: Request):
+    user = current_user(request)
+    if user["role"] != "ADMIN": raise HTTPException(403, "فقط مدیر")
+    with db() as con:
+        con.execute("DELETE FROM api_keys WHERE id=? AND user_id=?", (key_id, user["id"]))
+    return {"ok": True}
+
+@app.get("/api/public/status")
+def public_api_status(x_api_key: str = Header(default="")):
+    """Public API endpoint — requires API key."""
+    if not x_api_key:
+        raise HTTPException(401, "API key required")
+    key_hash = hashlib.sha256(x_api_key.encode()).hexdigest()
+    with db() as con:
+        key_row = con.execute("SELECT * FROM api_keys WHERE key_hash=? AND active=1", (key_hash,)).fetchone()
+        if not key_row: raise HTTPException(401, "Invalid API key")
+        con.execute("UPDATE api_keys SET last_used=? WHERE id=?", (now(), key_row["id"]))
+        return {"status": "ok", "version": SYSTEM_VERSION, "scopes": key_row["scopes"]}
+
+@app.get("/api/public/companies")
+def public_list_companies(x_api_key: str = Header(default="")):
+    """Public API — list companies."""
+    key_hash = hashlib.sha256(x_api_key.encode()).hexdigest()
+    with db() as con:
+        key_row = con.execute("SELECT * FROM api_keys WHERE key_hash=? AND active=1", (key_hash,)).fetchone()
+        if not key_row: raise HTTPException(401, "Invalid API key")
+        if "read" not in key_row["scopes"] and "all" not in key_row["scopes"]:
+            raise HTTPException(403, "Insufficient scope")
+        rows = con.execute("SELECT id, code, name, kind, national_id, phone, active FROM companies ORDER BY name").fetchall()
+        return [dict(r) for r in rows]
+
+@app.get("/api/public/invoices")
+def public_list_invoices(x_api_key: str = Header(default=""), company_id: str = ""):
+    """Public API — list invoices."""
+    key_hash = hashlib.sha256(x_api_key.encode()).hexdigest()
+    with db() as con:
+        key_row = con.execute("SELECT * FROM api_keys WHERE key_hash=? AND active=1", (key_hash,)).fetchone()
+        if not key_row: raise HTTPException(401, "Invalid API key")
+        if "read" not in key_row["scopes"] and "all" not in key_row["scopes"]:
+            raise HTTPException(403, "Insufficient scope")
+        sql = "SELECT i.id, i.code, i.title, i.issue_date, i.due_date, i.status, i.total_amount, i.paid_amount, c.name AS company_name FROM invoices i LEFT JOIN companies c ON c.id=i.company_id WHERE 1=1"
+        params = []
+        if company_id:
+            sql += " AND i.company_id=?"
+            params.append(company_id)
+        sql += " ORDER BY i.issue_date DESC LIMIT 100"
+        rows = con.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+
+# ========================================================================
+# PHASE 4: WEBHOOKS
+# ========================================================================
+class WebhookCreateModel(BaseModel):
+    url: str
+    event_type: str  # task.created, task.approved, invoice.created, fee.paid, etc.
+    secret: str = ""
+
+@app.get("/api/webhooks")
+def list_webhooks(request: Request):
+    user = current_user(request)
+    if user["role"] != "ADMIN": raise HTTPException(403, "فقط مدیر")
+    with db() as con:
+        rows = con.execute("SELECT * FROM webhooks WHERE created_by=?", (user["id"],)).fetchall()
+        return [dict(r) for r in rows]
+
+@app.post("/api/webhooks")
+def create_webhook(payload: WebhookCreateModel, request: Request):
+    user = current_user(request)
+    if user["role"] != "ADMIN": raise HTTPException(403, "فقط مدیر")
+    wid = uid()
+    with db() as con:
+        con.execute("INSERT INTO webhooks VALUES(?,?,?,?,?,?,?)",
+                    (wid, payload.url, payload.event_type, 1, payload.secret, user["id"], now()))
+    return {"id": wid}
+
+@app.delete("/api/webhooks/{webhook_id}")
+def delete_webhook(webhook_id: str, request: Request):
+    user = current_user(request)
+    if user["role"] != "ADMIN": raise HTTPException(403, "فقط مدیر")
+    with db() as con:
+        con.execute("DELETE FROM webhooks WHERE id=?", (webhook_id,))
+    return {"ok": True}
+
+def fire_webhook(con, event_type: str, payload: dict):
+    """Fire webhooks matching the event type."""
+    import urllib.request
+    webhooks = con.execute("SELECT * FROM webhooks WHERE event_type=? AND active=1", (event_type,)).fetchall()
+    for wh in webhooks:
+        try:
+            data = json.dumps({"event": event_type, "data": payload, "timestamp": now()}, ensure_ascii=False).encode()
+            req = urllib.request.Request(wh["url"], data=data, headers={"Content-Type": "application/json"})
+            if wh["secret"]:
+                req.add_header("X-Webhook-Secret", wh["secret"])
+            urllib.request.urlopen(req, timeout=5)
+        except Exception:
+            pass  # webhook failures are silent
+
+
+# ========================================================================
+# PHASE 4: OCR PLACEHOLDER (خواندن خودکار فاکتور)
+# ========================================================================
+@app.post("/api/ocr/parse-invoice")
+async def ocr_parse_invoice(request: Request, file: UploadFile = File(...)):
+    """Upload an image/PDF of an invoice and extract data (mock OCR)."""
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    content = await file.read(5 * 1024 * 1024)  # 5MB max
+    if not file.filename:
+        raise HTTPException(400, "فایل نامعتبر")
+    # Mock OCR — in production, integrate with Tesseract or cloud OCR
+    return {
+        "ok": True,
+        "filename": file.filename,
+        "size": len(content),
+        "extracted": {
+            "invoice_number": None,
+            "date": None,
+            "total": None,
+            "seller_name": None,
+            "buyer_name": None,
+            "items": [],
+        },
+        "message": "OCR در حالت شبیه‌سازی است. برای فعال‌سازی واقعی، به سرویس OCR (Tesseract/Google Vision/Azure) متصل شود.",
+    }
