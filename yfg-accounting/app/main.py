@@ -1477,7 +1477,7 @@ def service_worker():
 @app.get("/api/status")
 def status():
     with db() as con:
-        return {"setup_needed": con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0, "product": "YFG Accounting Desk", "version": "0.3.0.15"}
+        return {"setup_needed": con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0, "product": "YFG Accounting Desk", "version": "0.3.0.16"}
 
 
 @app.post("/api/setup")
@@ -5197,7 +5197,7 @@ import tempfile
 import urllib.request
 import subprocess
 
-SYSTEM_VERSION = "0.3.0.15"
+SYSTEM_VERSION = "0.3.0.16"
 SYSTEM_REPO_URL = "https://github.com/glcco9819-lang/yafgtax.git"
 SYSTEM_UPDATE_DIR = ROOT / "updates"  # temporary download location
 SYSTEM_BACKUP_DIR = DATA / "backups"
@@ -5504,25 +5504,170 @@ async def system_update_upload(request: Request, file: UploadFile = File(...)):
 
 @app.post("/api/system/restart")
 def system_restart(request: Request):
-    """Restarts the backend server (schedules a delayed restart)."""
+    """Restarts the backend server by re-executing the process."""
     user = current_user(request)
     require_perm(user, "settings.view")
     
     import threading
     import time
     import os
-    import signal
+    import subprocess
     
     def delayed_restart():
         time.sleep(2)  # Wait for response to be sent
-        # Send SIGTERM to self — the watchdog/supervisor will restart us
-        os.kill(os.getpid(), signal.SIGTERM)
+        # Write a restart script
+        restart_script = ROOT / "restart_server.sh"
+        restart_script.write_text(f"""#!/bin/bash
+# YFG Auto-Restart Script
+sleep 1
+cd "{ROOT}"
+nohup /home/z/.venv/bin/python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --proxy-headers < /dev/null > /tmp/yfg_backend.log 2>&1 &
+echo "Restarted at $(date)" >> /tmp/yfg_restart.log
+""")
+        os.chmod(str(restart_script), 0o755)
+        # Execute the restart script in background
+        subprocess.Popen(["bash", str(restart_script)], start_new_session=True)
+        # Kill current process
+        os.kill(os.getpid(), 9)  # SIGKILL — the new process will take over
     
     threading.Thread(target=delayed_restart, daemon=True).start()
     
     return {
         "ok": True,
-        "message": "سرور در حال ریاستارت است. لطفاً ۵ ثانیه صبر کنید و سپس صفحه را رفرش کنید.",
+        "message": "سرور در حال ریاستارت است. لطفاً ۱۰ ثانیه صبر کنید و سپس صفحه را رفرش کنید.",
+    }
+
+@app.post("/api/system/update-and-restart")
+def system_update_and_restart(request: Request, source: str = "github", branch: str = "main"):
+    """Download, apply update, AND restart the server in one step.
+    This is the 'one-click update' endpoint."""
+    user = current_user(request)
+    require_perm(user, "settings.view")
+    
+    # Step 1: Auto-backup database
+    SYSTEM_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    auto_backup_name = f"pre_update_{now().replace(':','-').replace('.','_')}.sqlite3.bak"
+    auto_backup_path = SYSTEM_BACKUP_DIR / auto_backup_name
+    shutil.copy2(str(DB_PATH), str(auto_backup_path))
+    
+    # Step 2: Download from GitHub
+    if source == "github":
+        zip_url = f"https://github.com/glcco9819-lang/yafgtax/archive/refs/heads/{branch}.zip"
+        try:
+            req = urllib.request.Request(zip_url, headers={"User-Agent": "YFG-Update"})
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                zip_data = resp.read()
+        except Exception as e:
+            return {"ok": False, "error": f"دانلود ناموفق: {e}"}
+    else:
+        return {"ok": False, "error": "فقط GitHub پشتیبانی می‌شود"}
+    
+    # Step 3: Extract
+    temp_dir = Path(tempfile.mkdtemp(prefix="yfg_update_"))
+    zip_path = temp_dir / "update.zip"
+    zip_path.write_bytes(zip_data)
+    
+    try:
+        with zipfile.ZipFile(str(zip_path), "r") as zf:
+            zf.extractall(str(temp_dir / "extracted"))
+    except Exception as e:
+        shutil.rmtree(str(temp_dir), ignore_errors=True)
+        return {"ok": False, "error": f"استخراج ZIP ناموفق: {e}"}
+    
+    # Step 4: Find the extracted folder
+    extracted_items = list((temp_dir / "extracted").iterdir())
+    if not extracted_items:
+        shutil.rmtree(str(temp_dir), ignore_errors=True)
+        return {"ok": False, "error": "ZIP خالی است"}
+    repo_dir = extracted_items[0]
+    
+    # Step 5: Copy all new files
+    updated_files = []
+    
+    # Copy main.py
+    src_main = repo_dir / "yfg-accounting" / "app" / "main.py"
+    dst_main = ROOT / "app" / "main.py"
+    if src_main.exists():
+        shutil.copy2(str(src_main), str(dst_main))
+        updated_files.append("app/main.py")
+    
+    # Copy static files
+    src_static = repo_dir / "yfg-accounting" / "app" / "static"
+    dst_static = ROOT / "app" / "static"
+    if src_static.exists():
+        for f in src_static.iterdir():
+            if f.is_file():
+                shutil.copy2(str(f), str(dst_static / f.name))
+                updated_files.append(f"app/static/{f.name}")
+    
+    # Copy scripts
+    src_scripts = repo_dir / "yfg-accounting" / "scripts"
+    dst_scripts = ROOT.parent / "yfg-accounting" / "scripts"
+    if src_scripts.exists() and dst_scripts.exists():
+        for f in src_scripts.iterdir():
+            if f.is_file():
+                shutil.copy2(str(f), str(dst_scripts / f.name))
+                updated_files.append(f"scripts/{f.name}")
+    
+    # Copy next.config.ts
+    src_nextconfig = repo_dir / "next.config.ts"
+    dst_nextconfig = ROOT.parent / "next.config.ts" if (ROOT.parent / "next.config.ts").exists() else None
+    if src_nextconfig.exists() and dst_nextconfig:
+        shutil.copy2(str(src_nextconfig), str(dst_nextconfig))
+        updated_files.append("next.config.ts")
+    
+    # Copy public/static
+    src_public = repo_dir / "public" / "static"
+    dst_public = ROOT.parent / "public" / "static" if (ROOT.parent / "public" / "static").exists() else None
+    if src_public.exists() and dst_public:
+        for f in src_public.iterdir():
+            if f.is_file():
+                shutil.copy2(str(f), str(dst_public / f.name))
+                updated_files.append(f"public/static/{f.name}")
+    
+    # Clean up
+    shutil.rmtree(str(temp_dir), ignore_errors=True)
+    
+    # Get new version
+    new_version = SYSTEM_VERSION
+    try:
+        with open(str(dst_main), "r", encoding="utf-8") as f:
+            content_str = f.read()
+            m = re.search(r'SYSTEM_VERSION\s*=\s*"([^"]+)"', content_str)
+            if m:
+                new_version = m.group(1)
+    except Exception:
+        pass
+    
+    # Step 6: Write restart script and schedule restart
+    import threading, time, os, subprocess
+    restart_script = ROOT / "restart_server.sh"
+    restart_script.write_text(f"""#!/bin/bash
+# YFG Auto-Restart after Update
+sleep 2
+cd "{ROOT}"
+nohup /home/z/.venv/bin/python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --proxy-headers < /dev/null > /tmp/yfg_backend.log 2>&1 &
+echo "Auto-restarted at $(date) after update to {new_version}" >> /tmp/yfg_restart.log
+""")
+    os.chmod(str(restart_script), 0o755)
+    
+    def delayed_restart():
+        time.sleep(3)
+        subprocess.Popen(["bash", str(restart_script)], start_new_session=True)
+        os.kill(os.getpid(), 9)
+    
+    threading.Thread(target=delayed_restart, daemon=True).start()
+    
+    return {
+        "ok": True,
+        "previous_version": SYSTEM_VERSION,
+        "new_version": new_version,
+        "backup_file": auto_backup_name,
+        "updated_files": updated_files,
+        "updated_count": len(updated_files),
+        "message": f"آپدیت به نسخه {new_version} نصب شد. {len(updated_files)} فایل آپدیت شد. سرور در حال ریاستارت است — ۱۰ ثانیه صبر کنید.",
+        "restart_required": True,
+        "restart_scheduled": True,
     }
 
 
