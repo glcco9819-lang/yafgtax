@@ -1477,7 +1477,7 @@ def service_worker():
 @app.get("/api/status")
 def status():
     with db() as con:
-        return {"setup_needed": con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0, "product": "YFG Accounting Desk", "version": "0.3.0.12"}
+        return {"setup_needed": con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0, "product": "YFG Accounting Desk", "version": "0.3.0.13"}
 
 
 @app.post("/api/setup")
@@ -5197,7 +5197,7 @@ import tempfile
 import urllib.request
 import subprocess
 
-SYSTEM_VERSION = "0.3.0.12"
+SYSTEM_VERSION = "0.3.0.13"
 SYSTEM_REPO_URL = "https://github.com/glcco9819-lang/yafgtax.git"
 SYSTEM_UPDATE_DIR = ROOT / "updates"  # temporary download location
 SYSTEM_BACKUP_DIR = DATA / "backups"
@@ -7839,3 +7839,328 @@ def validate_password(password: str) -> tuple[bool, str]:
     if len(password) < 4:
         return False, "رمز عبور حداقل باید ۴ نویسه باشد"
     return True, ""
+
+
+# ========================================================================
+# PHASE 7: IRAN ECOSYSTEM (اکوسیستم ایران)
+# ========================================================================
+
+# 7.1: Sheba / IR-IBAN Support (پشتیبانی شماره شبا)
+SHEBA_SCHEMA = """CREATE TABLE IF NOT EXISTS company_bank_accounts(
+ id TEXT PRIMARY KEY,
+ company_id TEXT NOT NULL REFERENCES companies(id),
+ sheba TEXT NOT NULL, -- IR + 24 digits (without spaces)
+ bank_name TEXT NOT NULL DEFAULT '',
+ account_number TEXT NOT NULL DEFAULT '',
+ is_default INTEGER NOT NULL DEFAULT 0,
+ active INTEGER NOT NULL DEFAULT 1,
+ created_by TEXT NOT NULL REFERENCES users(id),
+ created_at TEXT NOT NULL,
+ UNIQUE(company_id, sheba)
+);"""
+
+with db() as con:
+    con.executescript(SHEBA_SCHEMA)
+
+IRANIAN_BANKS = {
+    "010": "ملت", "011": "سامان", "012": "سپه", "013": "کشاورزی", "014": "مسکن",
+    "015": "پاسارگاد", "016": "پارسیان", "017": "کارآفرین", "018": "صادرات",
+    "019": "تجارت", "020": "ملی ایران", "021": "آینده", "022": "شهرداری تهران",
+    "023": "دی", "024": "پست بانک", "025": "توسعه تعاون", "026": "توسعه صادرات",
+    "027": "صنعت و معدن", "028": "رفاه کارگران", "029": "رسالت", "030": "انسجام",
+    "031": "سرمایه", "032": "تات", "033": "قوامین", "034": "مهر اقتصاد",
+    "035": "شهر", "036": "آیین", "037": "نور", "038": "مهر ایران",
+    "039": "خاورمیانه", "040": "ارمغان", "041": "گردشگری", "042": "کلان",
+    "043": "اقتصاد نوین", "044": "پاسارگاد", "045": "موسسه اعتباری توسعه",
+    "046": "موسسه اعتباری فرشته", "047": "موسسه اعتباری بانک کارآفرین",
+}
+
+def validate_sheba(sheba: str) -> tuple[bool, str, str]:
+    """Validate Iranian Sheba (IR-IBAN) format."""
+    sheba = sheba.replace(" ", "").upper()
+    if not sheba.startswith("IR") or len(sheba) != 26:
+        return False, "", "شماره شبا باید با IR شروع و ۲۶ نویسه باشد"
+    if not sheba[2:].isdigit():
+        return False, "", "بخش عددی شبا نامعتبر است"
+    # Extract bank code (digits 4-6)
+    bank_code = sheba[5:8]
+    bank_name = IRANIAN_BANKS.get(bank_code, "نامشخص")
+    # IBAN checksum validation
+    rearranged = sheba[4:] + sheba[:4]
+    converted = ""
+    for c in rearranged:
+        if c.isdigit():
+            converted += c
+        else:
+            converted += str(ord(c) - 55)
+    try:
+        if int(converted) % 97 != 1:
+            return False, bank_name, "چک‌سام شبا نامعتبر است"
+    except Exception:
+        return False, bank_name, "فرمت شبا نامعتبر"
+    return True, bank_name, ""
+
+class BankAccountModel(BaseModel):
+    company_id: str
+    sheba: str
+    bank_name: str = ""
+    account_number: str = ""
+    is_default: int = 0
+
+@app.get("/api/companies/{company_id}/bank-accounts")
+def list_bank_accounts(company_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        rows = con.execute("SELECT * FROM company_bank_accounts WHERE company_id=? AND active=1 ORDER BY is_default DESC", (company_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+@app.post("/api/companies/{company_id}/bank-accounts")
+def add_bank_account(company_id: str, payload: BankAccountModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    valid, bank_name, error = validate_sheba(payload.sheba)
+    if not valid:
+        raise HTTPException(400, error)
+    bid = uid()
+    with db() as con:
+        try:
+            con.execute("INSERT INTO company_bank_accounts VALUES(?,?,?,?,?,?,?,?)",
+                        (bid, company_id, payload.sheba.upper(), bank_name or payload.bank_name,
+                         payload.account_number, payload.is_default, 1, user["id"], now()))
+        except Exception as e:
+            if "UNIQUE" in str(e): raise HTTPException(400, "این شبا قبلاً ثبت شده")
+            raise
+    return {"id": bid, "bank_name": bank_name}
+
+@app.delete("/api/companies/{company_id}/bank-accounts/{account_id}")
+def delete_bank_account(company_id: str, account_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    with db() as con:
+        con.execute("DELETE FROM company_bank_accounts WHERE id=? AND company_id=?", (account_id, company_id))
+    return {"ok": True}
+
+@app.get("/api/banks/list")
+def list_iranian_banks(request: Request):
+    user = current_user(request)
+    return {"banks": IRANIAN_BANKS}
+
+# 7.2: Paya Batch Transfer (پرداخت گروهی پایا)
+PAYA_SCHEMA = """CREATE TABLE IF NOT EXISTS paya_batches(
+ id TEXT PRIMARY KEY,
+ title TEXT NOT NULL,
+ description TEXT NOT NULL DEFAULT '',
+ batch_date TEXT NOT NULL,
+ total_amount REAL NOT NULL DEFAULT 0,
+ status TEXT NOT NULL DEFAULT 'DRAFT', -- DRAFT, READY, SENT, COMPLETED, FAILED
+ source_company_id TEXT REFERENCES companies(id),
+ source_sheba TEXT,
+ items_json TEXT NOT NULL DEFAULT '[]',
+ created_by TEXT NOT NULL REFERENCES users(id),
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);"""
+
+with db() as con:
+    con.executescript(PAYA_SCHEMA)
+
+class PayaBatchModel(BaseModel):
+    title: str
+    description: str = ""
+    batch_date: str
+    source_company_id: str | None = None
+    source_sheba: str | None = None
+    items: list[dict] = []  # [{sheba, amount, name, description, fee_type}]
+
+@app.get("/api/paya-batches")
+def list_paya_batches(request: Request, status: str = ""):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        sql = "SELECT * FROM paya_batches WHERE 1=1"
+        params = []
+        if status:
+            sql += " AND status=?"
+            params.append(status)
+        sql += " ORDER BY created_at DESC"
+        rows = con.execute(sql, params).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            try: d["items"] = json.loads(r["items_json"])
+            except: d["items"] = []
+            del d["items_json"]
+            result.append(d)
+        return result
+
+@app.post("/api/paya-batches")
+def create_paya_batch(payload: PayaBatchModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    bid = uid()
+    total = sum(float(i.get("amount", 0)) for i in payload.items)
+    items_json = json.dumps(payload.items, ensure_ascii=False)
+    with db() as con:
+        con.execute("""INSERT INTO paya_batches
+            (id, title, description, batch_date, total_amount, status, source_company_id, source_sheba, items_json, created_by, created_at, updated_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (bid, payload.title, payload.description, payload.batch_date, total, 'DRAFT',
+             payload.source_company_id, payload.source_sheba, items_json, user["id"], now(), now()))
+    return {"id": bid, "total_amount": total, "item_count": len(payload.items)}
+
+@app.delete("/api/paya-batches/{batch_id}")
+def delete_paya_batch(batch_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    with db() as con:
+        con.execute("DELETE FROM paya_batches WHERE id=?", (batch_id,))
+    return {"ok": True}
+
+# 7.3: Digital Signature (PKI / امضای دیجیتال)
+PKI_SCHEMA = """CREATE TABLE IF NOT EXISTS digital_certificates(
+ id TEXT PRIMARY KEY,
+ company_id TEXT NOT NULL REFERENCES companies(id),
+ certificate_name TEXT NOT NULL,
+ issuer TEXT NOT NULL DEFAULT '',
+ serial_number TEXT NOT NULL DEFAULT '',
+ valid_from TEXT,
+ valid_until TEXT,
+ certificate_data TEXT NOT NULL DEFAULT '',
+ status TEXT NOT NULL DEFAULT 'ACTIVE',
+ created_by TEXT NOT NULL REFERENCES users(id),
+ created_at TEXT NOT NULL
+);"""
+
+with db() as con:
+    con.executescript(PKI_SCHEMA)
+
+class CertificateModel(BaseModel):
+    company_id: str
+    certificate_name: str
+    issuer: str = ""
+    serial_number: str = ""
+    valid_from: str | None = None
+    valid_until: str | None = None
+    certificate_data: str = ""
+
+@app.get("/api/digital-certificates")
+def list_certificates(request: Request, company_id: str = ""):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        sql = "SELECT * FROM digital_certificates WHERE 1=1"
+        params = []
+        if company_id:
+            sql += " AND company_id=?"
+            params.append(company_id)
+        sql += " ORDER BY created_at DESC"
+        rows = con.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+@app.post("/api/digital-certificates")
+def add_certificate(payload: CertificateModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    cid = uid()
+    with db() as con:
+        con.execute("INSERT INTO digital_certificates VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                    (cid, payload.company_id, payload.certificate_name, payload.issuer, payload.serial_number,
+                     payload.valid_from, payload.valid_until, payload.certificate_data, 'ACTIVE', user["id"], now()))
+    return {"id": cid}
+
+@app.delete("/api/digital-certificates/{cert_id}")
+def delete_certificate(cert_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    with db() as con:
+        con.execute("DELETE FROM digital_certificates WHERE id=?", (cert_id,))
+    return {"ok": True}
+
+# 7.4: Social Security (سازمان تامین اجتماعی)
+SSO_SCHEMA = """CREATE TABLE IF NOT EXISTS sso_submissions(
+ id TEXT PRIMARY KEY,
+ company_id TEXT NOT NULL REFERENCES companies(id),
+ period TEXT NOT NULL,
+ employee_count INTEGER NOT NULL DEFAULT 0,
+ total_salary REAL NOT NULL DEFAULT 0,
+ employer_share REAL NOT NULL DEFAULT 0,
+ employee_share REAL NOT NULL DEFAULT 0,
+ total_premium REAL NOT NULL DEFAULT 0,
+ status TEXT NOT NULL DEFAULT 'DRAFT',
+ submitted_at TEXT,
+ reference_code TEXT,
+ notes TEXT NOT NULL DEFAULT '',
+ created_by TEXT NOT NULL REFERENCES users(id),
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);"""
+
+with db() as con:
+    con.executescript(SSO_SCHEMA)
+
+class SSOSubmissionModel(BaseModel):
+    company_id: str
+    period: str
+    employee_count: int = 0
+    total_salary: float = 0
+    employer_share: float = 0
+    employee_share: float = 0
+    total_premium: float = 0
+    notes: str = ""
+
+@app.get("/api/sso/submissions")
+def list_sso_submissions(request: Request, company_id: str = "", period: str = ""):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        sql = "SELECT s.*, c.name AS company_name FROM sso_submissions s LEFT JOIN companies c ON c.id=s.company_id WHERE 1=1"
+        params = []
+        if company_id:
+            sql += " AND s.company_id=?"; params.append(company_id)
+        if period:
+            sql += " AND s.period=?"; params.append(period)
+        sql += " ORDER BY s.period DESC"
+        rows = con.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+@app.post("/api/sso/submissions")
+def create_sso_submission(payload: SSOSubmissionModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    sid = uid()
+    with db() as con:
+        con.execute("""INSERT INTO sso_submissions
+            (id, company_id, period, employee_count, total_salary, employer_share, employee_share, total_premium, status, submitted_at, reference_code, notes, created_by, created_at, updated_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (sid, payload.company_id, payload.period, payload.employee_count, payload.total_salary,
+             payload.employer_share, payload.employee_share, payload.total_premium, 'DRAFT', None, None,
+             payload.notes, user["id"], now(), now()))
+    return {"id": sid}
+
+@app.patch("/api/sso/submissions/{submission_id}")
+def update_sso_submission(submission_id: str, request: Request, status: str = "", reference_code: str = ""):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    with db() as con:
+        updates = []
+        params = []
+        if status:
+            updates.append("status=?"); params.append(status)
+            if status == 'SUBMITTED':
+                updates.append("submitted_at=?"); params.append(now())
+        if reference_code:
+            updates.append("reference_code=?"); params.append(reference_code)
+        if updates:
+            updates.append("updated_at=?"); params.append(now())
+            params.append(submission_id)
+            con.execute(f"UPDATE sso_submissions SET {', '.join(updates)} WHERE id=?", params)
+    return {"ok": True}
+
+@app.delete("/api/sso/submissions/{submission_id}")
+def delete_sso_submission(submission_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    with db() as con:
+        con.execute("DELETE FROM sso_submissions WHERE id=?", (submission_id,))
+    return {"ok": True}

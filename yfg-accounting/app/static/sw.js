@@ -1,5 +1,5 @@
-// YFG Service Worker v25 — version 0.3.0.12 — Phase 6: security + MFA + audit chain + DR
-const CACHE='yfg-desk-v25';
+// YFG Service Worker v26 — version 0.3.0.13 — Phase 7: Iran ecosystem
+const CACHE='yfg-desk-v26';
 const ASSETS=['/','/static/style.css','/static/themes.css','/static/app.js','/static/performance.js','/static/enhanced.js','/static/themes.js','/static/icon.svg','/static/icon-192.png','/static/icon-512.png','/manifest.webmanifest'];
 
 self.addEventListener('install', e => e.waitUntil(
