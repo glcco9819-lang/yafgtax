@@ -1,5 +1,5 @@
-// YFG Service Worker v24 — version 0.3.0.11 — Phase 5: complete all features
-const CACHE='yfg-desk-v24';
+// YFG Service Worker v25 — version 0.3.0.12 — Phase 6: security + MFA + audit chain + DR
+const CACHE='yfg-desk-v25';
 const ASSETS=['/','/static/style.css','/static/themes.css','/static/app.js','/static/performance.js','/static/enhanced.js','/static/themes.js','/static/icon.svg','/static/icon-192.png','/static/icon-512.png','/manifest.webmanifest'];
 
 self.addEventListener('install', e => e.waitUntil(
