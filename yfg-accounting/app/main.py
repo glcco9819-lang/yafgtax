@@ -33,7 +33,7 @@ CHAT_ATTACHMENT_ALLOWED = {
     ".pdf", ".txt", ".csv", ".xlsx", ".xls", ".docx", ".doc", ".pptx",
     ".zip", ".7z", ".rar", ".json", ".md"
 }
-PBKDF2_ROUNDS = 100_000
+PBKDF2_ROUNDS = 1_000
 DATA.mkdir(parents=True, exist_ok=True)
 FILES.mkdir(parents=True, exist_ok=True)
 ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
