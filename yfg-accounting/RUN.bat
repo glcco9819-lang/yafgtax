@@ -29,17 +29,32 @@ echo [2/3] Installing dependencies...
 "%PYTHON%" -c "import fastapi" 2>nul
 if errorlevel 1 (
     echo Installing from local packages...
-    "%PYTHON%" -m pip install --no-index --find-links=packages -r requirements.txt 2>nul
+    "%PYTHON%" -m pip install --no-index --find-links=packages -r requirements.txt
     if errorlevel 1 (
-        echo Local install failed. Trying online...
-        "%PYTHON%" -m pip install --timeout 300 -r requirements.txt
+        echo.
+        echo Local install had issues. Trying package by package...
+        "%PYTHON%" -m pip install --no-index --find-links=packages fastapi
+        "%PYTHON%" -m pip install --no-index --find-links=packages uvicorn
+        "%PYTHON%" -m pip install --no-index --find-links=packages python-multipart
+        "%PYTHON%" -m pip install --no-index --find-links=packages openpyxl
+        "%PYTHON%" -m pip install --no-index --find-links=packages cryptography
+        "%PYTHON%" -c "import fastapi" 2>nul
         if errorlevel 1 (
             echo.
-            echo ERROR: Could not install dependencies.
-            echo Please run manually:
-            echo   pip install fastapi uvicorn python-multipart openpyxl cryptography
-            pause
-            exit /b 1
+            echo Trying online install with long timeout...
+            "%PYTHON%" -m pip install --timeout 600 fastapi uvicorn python-multipart openpyxl cryptography
+            if errorlevel 1 (
+                echo.
+                echo ERROR: Could not install dependencies.
+                echo Please install manually:
+                echo   pip install fastapi
+                echo   pip install uvicorn
+                echo   pip install python-multipart
+                echo   pip install openpyxl
+                echo   pip install cryptography
+                pause
+                exit /b 1
+            )
         )
     )
     echo Dependencies installed.
