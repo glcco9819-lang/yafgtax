@@ -1060,6 +1060,10 @@
     {key:'invoices', label:'فاکتورها', icon:'💳'},
     {key:'fees', label:'مطالبات (Fee)', icon:'💰'},
     {key:'moudian', label:'سامانه مودیان', icon:'🔗'},
+    {key:'proposals', label:'پیشنهادها', icon:'📋'},
+    {key:'payroll', label:'حقوق', icon:'💼'},
+    {key:'bank', label:'بانک/شبا', icon:'🏦'},
+    {key:'doc_requests', label:'درخواست سند', icon:'📥'},
   ];
 
   async function renderCustomers() {
@@ -1112,6 +1116,10 @@
       else if (customersTab === 'invoices') await renderInvoicesList(content, isAdmin);
       else if (customersTab === 'fees') await renderFeesList(content, isAdmin);
       else if (customersTab === 'moudian') await renderMoudianList(content, isAdmin);
+      else if (customersTab === 'proposals') await renderProposalsList(content, isAdmin);
+      else if (customersTab === 'payroll') await renderPayrollList(content, isAdmin);
+      else if (customersTab === 'bank') await renderBankAccountsList(content, isAdmin);
+      else if (customersTab === 'doc_requests') await renderDocRequestsList(content, isAdmin);
       else content.innerHTML = `<div class="empty-state" style="text-align:center;padding:40px 20px;color:#94a3b8;">
         <div style="font-size:48px;margin-bottom:12px;">🚧</div>
         <h3 style="margin:0 0 8px;">این بخش به‌زودی فعال خواهد شد</h3>
@@ -2314,6 +2322,8 @@
     {key:'kpi', label:'گزارش KPI', icon:'🎯'},
     {key:'time', label:'تایم ترکینگ', icon:'⏱'},
     {key:'tax', label:'تقویم مالیاتی', icon:'📅'},
+    {key:'analytics', label:'تحلیل پیش‌بینانه', icon:'📊'},
+    {key:'activity', label:'خط زمانی فعالیت', icon:'📜'},
   ];
 
   // ============ Reports (گزارشات) ============
@@ -2337,6 +2347,8 @@
       else if (reportsTab === 'kpi') await window.__renderKPIReport(content);
       else if (reportsTab === 'time') await window.__renderTimeTracking(content);
       else if (reportsTab === 'tax') await renderTaxDeadlines(content);
+      else if (reportsTab === 'analytics') await renderAnalyticsTab(content);
+      else if (reportsTab === 'activity') await renderActivityFeedTab(content);
     } catch(e) { content.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
   }
   window.__renderReports = renderReports;
@@ -2449,7 +2461,14 @@
         {key:'process_types', label:'انواع فرآیند', icon:'🔄'},
         {key:'role_types', label:'انواع نقش', icon:'👥'},
         {key:'performance_types', label:'انواع عملکرد', icon:'✎'},
-        {key:'system_update', label:'به‌روزرسانی سامانه', icon:'🔄'},
+        {key:'payroll', label:'حقوق و دستمزد', icon:'💼'},
+        {key:'tax_cases', label:'تسویه مالیاتی', icon:'⚖'},
+        {key:'mfa', label:'امنیت (MFA)', icon:'🔐'},
+        {key:'api_keys', label:'کلیدهای API', icon:'🔑'},
+        {key:'webhooks', label:'وب‌هوک', icon:'🔗'},
+        {key:'integrations', label:'اتصال نرم‌افزار', icon:'🔌'},
+        {key:'sso', label:'تامین اجتماعی', icon:'🏥'},
+        {key:'system_update', label:'به‌روزرسانی', icon:'🔄'},
       ];
       section.innerHTML = `
         <h1>تنظیمات</h1>
@@ -2470,6 +2489,20 @@
         await renderRequestTypesTab(document.getElementById('settingsContent'));
       } else if (settingsTab === 'kpis') {
         renderKPITab(data);
+      } else if (settingsTab === 'payroll') {
+        await renderPayrollTab(document.getElementById('settingsContent'));
+      } else if (settingsTab === 'tax_cases') {
+        await renderTaxCasesTab(document.getElementById('settingsContent'));
+      } else if (settingsTab === 'mfa') {
+        await renderMFATab(document.getElementById('settingsContent'));
+      } else if (settingsTab === 'api_keys') {
+        await renderAPIKeysTab(document.getElementById('settingsContent'));
+      } else if (settingsTab === 'webhooks') {
+        await renderWebhooksTab(document.getElementById('settingsContent'));
+      } else if (settingsTab === 'integrations') {
+        await renderIntegrationsTab(document.getElementById('settingsContent'));
+      } else if (settingsTab === 'sso') {
+        await renderSSOTab(document.getElementById('settingsContent'));
       } else if (settingsTab === 'system_update') {
         await renderSystemUpdateTab(document.getElementById('settingsContent'));
       } else {
@@ -2490,6 +2523,227 @@
     {value:'user_link', label:'لینک به کاربر', icon:'👤'},
     {value:'duration', label:'مدت (محاسبه خودکار)', icon:'⌛'},
   ];
+
+
+  // ============ PHASE 5+ UI FEATURES ============
+  
+  // --- Payroll (حقوق و دستمزد) ---
+  async function renderPayrollTab(container) {
+    if (!container) return;
+    try {
+      const [payroll, companies] = await Promise.all([api('/payroll'), api('/companies').catch(()=>[])]);
+      const canManage = state.me?.role === 'ADMIN' || state.me?.role === 'CEO';
+      const rows = (payroll||[]).map(p => `<tr>
+        <td><b>${esc(p.employee_name)}</b></td>
+        <td>${esc(p.company_name||'—')}</td>
+        <td style="font-size:12px;">${esc(p.period)}</td>
+        <td style="font-size:12px;">${num(Math.round(p.gross_salary))} ریال</td>
+        <td style="font-size:12px;">${num(Math.round(p.tax_amount))}</td>
+        <td style="font-size:12px;">${num(Math.round(p.insurance_amount))}</td>
+        <td style="font-size:12px;font-weight:600;color:#16a34a;">${num(Math.round(p.net_salary))} ریال</td>
+        <td>${({DRAFT:'<span style="color:#94a3b8;">پیش‌نویس</span>',CALCULATED:'<span style="color:#3b82f6;">محاسبه شد</span>',FILED:'<span style="color:#f59e0b;">ارسال شد</span>',PAID:'<span style="color:#10b981;">پرداخت شد</span>'}[p.status])||p.status}</td>
+        <td>${canManage?`<button class="btn soft small" onclick="window.__payrollForm('${p.id}')">✎</button><button class="btn small" style="background:#fee2e2;color:#991b1b;" onclick="window.__payrollDelete('${p.id}')">✗</button>`:''}</td>
+      </tr>`).join('');
+      container.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;"><div><h3 style="margin:0;">💼 حقوق و دستمزد (${(payroll||[]).length})</h3><p class="hint" style="margin-top:2px;">حقوق مشتریان با محاسبه مالیات/بیمه/خالص</p></div>${canManage?'<button class="btn primary small" onclick="window.__payrollForm()">＋ رکورد جدید</button>':''}</div><div class="table-card" style="overflow-x:auto;"><table class="data-table"><thead><tr><th>نام</th><th>شرکت</th><th>دوره</th><th>ناخالص</th><th>مالیات</th><th>بیمه</th><th>خالص</th><th>وضعیت</th><th>عملیات</th></tr></thead><tbody>${rows||'<tr><td colspan="9" style="text-align:center;padding:20px;color:#64748b;">رکوردی ثبت نشده</td></tr>'}</tbody></table></div>`;
+      window.__payrollForm = (id) => openPayrollForm(id, companies, () => { if (settingsTab === 'payroll') renderSettings(); else renderCustomers(); });
+      window.__payrollDelete = async (id) => { if(!confirm('حذف این رکورد؟')) return; try { await api(`/payroll/${id}`, {method:'DELETE'}); toast('حذف شد'); if(settingsTab==='payroll') renderSettings(); else renderCustomers(); } catch(e){toast(e.message,true);} };
+    } catch(e) { container.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
+  }
+
+  async function renderPayrollList(content, isAdmin) {
+    // Reuse the same function for Customers tab
+    await renderPayrollTab(content);
+  }
+
+  function openPayrollForm(id, companies, onDone) {
+    (async () => {
+      let p = null;
+      if (id) p = (await api('/payroll')).find(x => x.id === id);
+      const companyOpts = (companies||[]).map(c=>`<option value="${c.id}" ${p&&p.company_id===c.id?'selected':''}>${esc(c.name)}</option>`).join('');
+      const body = `<form id="payrollForm" style="display:grid;gap:12px;"><div class="form-grid"><label>نام کارمند <span style="color:#ef4444;">*</span><input class="field" name="employee_name" required value="${p?esc(p.employee_name):''}"></label><label>شرکت <span style="color:#ef4444;">*</span><select class="field" name="company_id" required><option value="">—</option>${companyOpts}</select></label></div><div class="form-grid"><label>دوره (۱۴۰۳/۰۱)<input class="field" name="period" required value="${p?esc(p.period):''}"></label><label>کد ملی<input class="field" name="employee_tin" value="${p?esc(p.employee_tin||''):''}"></label></div><div class="form-grid"><label>حقوق ناخالص<input class="field" type="number" name="gross_salary" value="${p?p.gross_salary:0}"></label><label>مالیات<input class="field" type="number" name="tax_amount" value="${p?p.tax_amount:0}"></label><label>بیمه<input class="field" type="number" name="insurance_amount" value="${p?p.insurance_amount:0}"></label><label>کسورات<input class="field" type="number" name="deductions" value="${p?p.deductions:0}"></label></div><label>یادداشت<textarea class="field" name="notes" rows="2">${p?esc(p.notes||''):''}</textarea></label><div style="display:flex;justify-content:flex-end;gap:8px;"><button type="button" class="btn soft" onclick="document.getElementById('modalRoot').innerHTML=''">انصراف</button><button type="submit" class="btn primary">${id?'ذخیره':'ایجاد'}</button></div></form>`;
+      modal(id?'✎ ویرایش حقوق':'＋ رکورد حقوق', 'حقوق و دستمزد مشتریان', body);
+      document.getElementById('payrollForm').addEventListener('submit', async e => {
+        e.preventDefault(); const fd = new FormData(e.currentTarget);
+        const payload = {company_id:fd.get('company_id'),employee_name:fd.get('employee_name').trim(),period:fd.get('period').trim(),employee_tin:fd.get('employee_tin').trim(),gross_salary:parseFloat(fd.get('gross_salary')||0),tax_amount:parseFloat(fd.get('tax_amount')||0),insurance_amount:parseFloat(fd.get('insurance_amount')||0),deductions:parseFloat(fd.get('deductions')||0),notes:fd.get('notes').trim()};
+        try { if(id) await api(`/payroll/${id}`,{method:'PATCH',body:JSON.stringify(payload)}); else await api('/payroll',{method:'POST',body:JSON.stringify(payload)}); document.getElementById('modalRoot').innerHTML=''; toast(id?'ذخیره شد':'ایجاد شد'); onDone(); } catch(err){toast(err.message,true);} });
+    })();
+  }
+
+  // --- Tax Cases (تسویه مالیاتی) ---
+  async function renderTaxCasesTab(container) {
+    if (!container) return;
+    try {
+      const [cases, companies] = await Promise.all([api('/tax-cases'), api('/companies').catch(()=>[])]);
+      const canManage = state.me?.role === 'ADMIN' || state.me?.role === 'CEO';
+      const rows = (cases||[]).map(c => `<tr><td><b>${esc(c.title)}</b></td><td>${esc(c.company_name||'—')}</td><td style="font-size:12px;">${({AUDIT:'حسابرسی',DISPUTE:'اختلاف',PENALTY:'جریمه',ASSESSMENT:'ارزیابی',RESOLUTION:'تسویه'}[c.case_type])||c.case_type}</td><td style="font-size:12px;">${esc(c.tax_year||'—')}</td><td style="font-size:12px;">${c.assessed_amount?num(Math.round(c.assessed_amount))+' ریال':'—'}</td><td>${({OPEN:'<span style="color:#ef4444;">باز</span>',IN_PROGRESS:'<span style="color:#f59e0b;">در دست بررسی</span>',RESOLVED:'<span style="color:#10b981;">حل شد</span>',CLOSED:'<span style="color:#94a3b8;">بسته</span>'}[c.status])||c.status}</td><td>${canManage?`<button class="btn soft small" onclick="window.__taxCaseForm('${c.id}')">✎</button><button class="btn small" style="background:#fee2e2;color:#991b1b;" onclick="window.__taxCaseDelete('${c.id}')">✗</button>`:''}</td></tr>`).join('');
+      container.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;"><div><h3 style="margin:0;">⚖ تسویه مالیاتی (${(cases||[]).length})</h3><p class="hint" style="margin-top:2px;">پرونده‌های مالیاتی: حسابرسی، اختلاف، جریمه</p></div>${canManage?'<button class="btn primary small" onclick="window.__taxCaseForm()">＋ پرونده جدید</button>':''}</div><div class="table-card" style="overflow-x:auto;"><table class="data-table"><thead><tr><th>عنوان</th><th>شرکت</th><th>نوع</th><th>سال مالیاتی</th><th>مبلغ ارزیابی</th><th>وضعیت</th><th>عملیات</th></tr></thead><tbody>${rows||'<tr><td colspan="7" style="text-align:center;padding:20px;color:#64748b;">پرونده‌ای ثبت نشده</td></tr>'}</tbody></table></div>`;
+      window.__taxCaseForm = (id) => openTaxCaseForm(id, companies, () => renderSettings());
+      window.__taxCaseDelete = async (id) => { if(!confirm('حذف پرونده؟')) return; try { await api(`/tax-cases/${id}`,{method:'DELETE'}); toast('حذف شد'); renderSettings(); } catch(e){toast(e.message,true);} };
+    } catch(e) { container.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
+  }
+
+  function openTaxCaseForm(id, companies, onDone) {
+    (async () => {
+      let c = null;
+      if (id) c = (await api('/tax-cases')).find(x => x.id === id);
+      const companyOpts = (companies||[]).map(co=>`<option value="${co.id}" ${c&&c.company_id===co.id?'selected':''}>${esc(co.name)}</option>`).join('');
+      const body = `<form id="taxCaseForm" style="display:grid;gap:12px;"><div class="form-grid"><label>عنوان <span style="color:#ef4444;">*</span><input class="field" name="title" required value="${c?esc(c.title):''}"></label><label>شرکت <span style="color:#ef4444;">*</span><select class="field" name="company_id" required><option value="">—</option>${companyOpts}</select></label></div><div class="form-grid"><label>نوع<select class="field" name="case_type"><option value="AUDIT" ${c&&c.case_type==='AUDIT'?'selected':''}>حسابرسی</option><option value="DISPUTE" ${c&&c.case_type==='DISPUTE'?'selected':''}>اختلاف</option><option value="PENALTY" ${c&&c.case_type==='PENALTY'?'selected':''}>جریمه</option><option value="ASSESSMENT" ${c&&c.case_type==='ASSESSMENT'?'selected':''}>ارزیابی</option></select></label><label>سال مالیاتی<input class="field" name="tax_year" value="${c?esc(c.tax_year||''):''}" placeholder="1403"></label></div><div class="form-grid"><label>مبلغ ارزیابی<input class="field" type="number" name="assessed_amount" value="${c?c.assessed_amount:0}"></label><label>مبلغ مورد اختلاف<input class="field" type="number" name="disputed_amount" value="${c?c.disputed_amount:0}"></label></div><label>توضیحات<textarea class="field" name="description" rows="3">${c?esc(c.description||''):''}</textarea></label><div style="display:flex;justify-content:flex-end;gap:8px;"><button type="button" class="btn soft" onclick="document.getElementById('modalRoot').innerHTML=''">انصراف</button><button type="submit" class="btn primary">${id?'ذخیره':'ایجاد'}</button></div></form>`;
+      modal(id?'✎ ویرایش پرونده':'＋ پرونده مالیاتی', 'تسویه مالیاتی', body);
+      document.getElementById('taxCaseForm').addEventListener('submit', async e => {
+        e.preventDefault(); const fd = new FormData(e.currentTarget);
+        const payload = {company_id:fd.get('company_id'),title:fd.get('title').trim(),case_type:fd.get('case_type'),tax_year:fd.get('tax_year').trim(),assessed_amount:parseFloat(fd.get('assessed_amount')||0),disputed_amount:parseFloat(fd.get('disputed_amount')||0),description:fd.get('description').trim()};
+        try { if(id) await api(`/tax-cases/${id}`,{method:'PATCH',body:JSON.stringify(payload)}); else await api('/tax-cases',{method:'POST',body:JSON.stringify(payload)}); document.getElementById('modalRoot').innerHTML=''; toast(id?'ذخیره شد':'ایجاد شد'); onDone(); } catch(err){toast(err.message,true);} });
+    })();
+  }
+
+  // --- MFA (احراز هویت دو عاملی) ---
+  async function renderMFATab(container) {
+    if (!container) return;
+    try {
+      const status = await api('/mfa/status');
+      container.innerHTML = `<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;"><h3 style="margin:0 0 16px;">🔐 احراز هویت دو عاملی (MFA)</h3><div style="display:grid;gap:12px;">${status.enabled?'<div style="background:#dcfce7;color:#16a34a;padding:14px;border-radius:8px;">✓ MFA فعال است. برای غیرفعال‌سازی روی دکمه زیر کلیک کنید.<br><button class="btn danger" style="margin-top:10px;" onclick="window.__mfaDisable()">غیرفعال‌سازی MFA</button></div>':'<div style="background:#fef3c7;color:#92400e;padding:14px;border-radius:8px;">⚠ MFA فعال نیست. برای فعال‌سازی:<br>۱. روی «راه‌اندازی MFA» کلیک کنید<br>۲. کد QR را در Google Authenticator اسکن کنید<br>۳. کد ۶ رقمی را وارد و تأیید کنید</div><button class="btn primary" style="margin-top:10px;" onclick="window.__mfaSetup()">راه‌اندازی MFA</button>'}</div></div>`;
+      window.__mfaSetup = async () => {
+        try { const r = await api('/mfa/setup', {method:'POST'}); const body = `<div style="text-align:center;"><p>کد زیر را در Google Authenticator وارد کنید:</p><div style="background:#f1f5f9;padding:16px;border-radius:8px;font-family:monospace;font-size:18px;margin:12px 0;">${esc(r.secret)}</div><p>کد پشتیبان:</p><div style="font-size:12px;color:#64748b;">${r.backup_codes.join(' | ')}</div><div style="margin-top:16px;"><input class="field" id="mfaToken" placeholder="کد ۶ رقمی" maxlength="6" style="text-align:center;font-size:20px;width:200px;"><button class="btn primary" style="margin-top:10px;" onclick="window.__mfaVerify()">تأیید</button></div></div>`; modal('راه‌اندازی MFA', '', body); } catch(e){toast(e.message,true);} };
+      window.__mfaVerify = async () => { const token = document.getElementById('mfaToken')?.value; if(!token) return toast('کد را وارد کنید',true); try { const r = await api(`/mfa/verify?token=${token}`, {method:'POST'}); toast(r.message); document.getElementById('modalRoot').innerHTML=''; renderSettings(); } catch(e){toast(e.message,true);} };
+      window.__mfaDisable = async () => { if(!confirm('غیرفعال‌سازی MFA؟')) return; try { await api('/mfa', {method:'DELETE'}); toast('MFA غیرفعال شد'); renderSettings(); } catch(e){toast(e.message,true);} };
+    } catch(e) { container.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
+  }
+
+  // --- API Keys ---
+  async function renderAPIKeysTab(container) {
+    if (!container) return;
+    try {
+      const keys = await api('/api-keys');
+      const rows = (keys||[]).map(k => `<tr><td><b>${esc(k.name)}</b></td><td style="font-size:11px;">${esc(k.scopes)}</td><td style="font-size:11px;">${k.last_used?timeFmt(k.last_used):'استفاده نشده'}</td><td><button class="btn small" style="background:#fee2e2;color:#991b1b;" onclick="window.__revokeKey('${k.id}')">ابطال</button></td></tr>`).join('');
+      container.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;"><div><h3 style="margin:0;">🔑 کلیدهای API (${(keys||[]).length})</h3><p class="hint" style="margin-top:2px;">دسترسی برنامه‌های خارجی به API</p></div><button class="btn primary small" onclick="window.__createKey()">＋ کلید جدید</button></div><div class="table-card"><table class="data-table"><thead><tr><th>نام</th><th>دسترسی</th><th>آخرین استفاده</th><th>عملیات</th></tr></thead><tbody>${rows||'<tr><td colspan="4" style="text-align:center;padding:20px;color:#64748b;">کلیدی ثبت نشده</td></tr>'}</tbody></table></div>`;
+      window.__createKey = async () => { const name = prompt('نام کلید API:'); if(!name) return; try { const r = await api('/api-keys', {method:'POST', body:JSON.stringify({name})}); modal('کلید API ساخته شد', '', `<div style="text-align:center;"><p>این کلید فقط یک‌بار نمایش داده می‌شود:</p><div style="background:#f1f5f9;padding:16px;border-radius:8px;font-family:monospace;font-size:14px;word-break:break-all;">${esc(r.key)}</div><p style="color:#ef4444;margin-top:8px;">⚠ این کلید را ذخیره کنید — دوباره نمایش داده نمی‌شود</p></div>`); renderSettings(); } catch(e){toast(e.message,true);} };
+      window.__revokeKey = async (id) => { if(!confirm('ابطال این کلید؟')) return; try { await api(`/api-keys/${id}`, {method:'DELETE'}); toast('کلید ابطال شد'); renderSettings(); } catch(e){toast(e.message,true);} };
+    } catch(e) { container.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
+  }
+
+  // --- Webhooks ---
+  async function renderWebhooksTab(container) {
+    if (!container) return;
+    try {
+      const hooks = await api('/webhooks');
+      const rows = (hooks||[]).map(w => `<tr><td style="font-size:12px;word-break:break-all;">${esc(w.url)}</td><td><code>${esc(w.event_type)}</code></td><td>${w.active?'<span style="color:#10b981;">فعال</span>':'<span style="color:#94a3b8;">غیرفعال</span>'}</td><td><button class="btn small" style="background:#fee2e2;color:#991b1b;" onclick="window.__deleteHook('${w.id}')">حذف</button></td></tr>`).join('');
+      container.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;"><div><h3 style="margin:0;">🔗 وب‌هوک‌ها (${(hooks||[]).length})</h3><p class="hint" style="margin-top:2px;">اعلان رویدادها به آدرس خارجی</p></div><button class="btn primary small" onclick="window.__createHook()">＋ وب‌هوک جدید</button></div><div class="table-card"><table class="data-table"><thead><tr><th>URL</th><th>رویداد</th><th>وضعیت</th><th>عملیات</th></tr></thead><tbody>${rows||'<tr><td colspan="4" style="text-align:center;padding:20px;color:#64748b;">وب‌هوکی ثبت نشده</td></tr>'}</tbody></table></div>`;
+      window.__createHook = async () => { const url = prompt('آدرس وب‌هوک (URL):'); if(!url) return; const event = prompt('نوع رویداد (مثلاً task.created, invoice.created):'); if(!event) return; try { await api('/webhooks', {method:'POST', body:JSON.stringify({url, event_type:event})}); toast('وب‌هوک ایجاد شد'); renderSettings(); } catch(e){toast(e.message,true);} };
+      window.__deleteHook = async (id) => { if(!confirm('حذف وب‌هوک؟')) return; try { await api(`/webhooks/${id}`, {method:'DELETE'}); toast('حذف شد'); renderSettings(); } catch(e){toast(e.message,true);} };
+    } catch(e) { container.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
+  }
+
+  // --- Integrations (اتصال نرم‌افزار حسابداری) ---
+  async function renderIntegrationsTab(container) {
+    if (!container) return;
+    try {
+      const [integrations, softwareList] = await Promise.all([api('/integrations'), api('/integrations/software-list').catch(()=>({software:{}}))]);
+      const software = softwareList?.software || {};
+      const rows = (integrations||[]).map(i => `<tr><td><b>${esc(software[i.software]||i.software)}</b></td><td>${esc(i.company_name||'—')}</td><td style="font-size:11px;">${i.last_sync?timeFmt(i.last_sync):'همگام نشده'}</td><td><button class="btn small" style="background:#e9f7ef;color:#15803d;" onclick="window.__importFile('${i.id}')">📥 واردات فایل</button></td></tr>`).join('');
+      container.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;"><div><h3 style="margin:0;">🔌 اتصال نرم‌افزار حسابداری (${(integrations||[]).length})</h3><p class="hint" style="margin-top:2px;">واردات داده از هلو، سپیدار، پارسیان</p></div><button class="btn primary small" onclick="window.__createIntegration()">＋ اتصال جدید</button></div><div class="table-card"><table class="data-table"><thead><tr><th>نرم‌افزار</th><th>شرکت</th><th>آخرین همگام‌سازی</th><th>عملیات</th></tr></thead><tbody>${rows||'<tr><td colspan="4" style="text-align:center;padding:20px;color:#64748b;">اتصالی ثبت نشده</td></tr>'}</tbody></table></div>`;
+      window.__createIntegration = async () => { const companies = await api('/companies').catch(()=>[]); const compOpts = companies.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join(''); const swOpts = Object.entries(software).map(([k,v])=>`<option value="${k}">${v}</option>`).join(''); const body = `<form id="integForm" style="display:grid;gap:12px;"><label>نرم‌افزار<select class="field" name="software">${swOpts}</select></label><label>شرکت<select class="field" name="company_id">${compOpts}</select></label><div style="display:flex;justify-content:flex-end;gap:8px;"><button type="button" class="btn soft" onclick="document.getElementById('modalRoot').innerHTML=''">انصراف</button><button type="submit" class="btn primary">اتصال</button></div></form>`; modal('اتصال نرم‌افزار', '', body); document.getElementById('integForm').addEventListener('submit', async e=>{e.preventDefault();const fd=new FormData(e.currentTarget);const fd2=new FormData();fd2.append('company_id',fd.get('company_id'));fd2.append('software',fd.get('software'));try{await api('/integrations',{method:'POST',body:fd2});document.getElementById('modalRoot').innerHTML='';toast('اتصال ایجاد شد');renderSettings();}catch(err){toast(err.message,true);}}); };
+      window.__importFile = async (id) => { const input = document.createElement('input'); input.type='file'; input.accept='.xlsx,.csv,.xml'; input.onchange=async()=>{if(!input.files[0])return;const fd=new FormData();fd.append('file',input.files[0]);try{const r=await api(`/integrations/${id}/import`,{method:'POST',body:fd});toast(r.message);renderSettings();}catch(e){toast(e.message,true);}}; input.click(); };
+    } catch(e) { container.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
+  }
+
+  // --- SSO (تامین اجتماعی) ---
+  async function renderSSOTab(container) {
+    if (!container) return;
+    try {
+      const [submissions, companies] = await Promise.all([api('/sso/submissions'), api('/companies').catch(()=>[])]);
+      const canManage = state.me?.role === 'ADMIN' || state.me?.role === 'CEO';
+      const rows = (submissions||[]).map(s => `<tr><td>${esc(s.company_name||'—')}</td><td style="font-size:12px;">${esc(s.period)}</td><td>${s.employee_count}</td><td style="font-size:12px;">${num(Math.round(s.total_salary))}</td><td style="font-size:12px;">${num(Math.round(s.total_premium))}</td><td>${({DRAFT:'<span style="color:#94a3b8;">پیش‌نویس</span>',SUBMITTED:'<span style="color:#3b82f6;">ارسال شد</span>'}[s.status])||s.status}</td><td>${canManage?`<button class="btn small" style="background:#fee2e2;color:#991b1b;" onclick="window.__ssoDelete('${s.id}')">✗</button>`:''}</td></tr>`).join('');
+      container.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;"><div><h3 style="margin:0;">🏥 تامین اجتماعی (${(submissions||[]).length})</h3><p class="hint" style="margin-top:2px;">ثبت لیست بیمه ماهانه</p></div>${canManage?'<button class="btn primary small" onclick="window.__ssoForm()">＋ ثبت جدید</button>':''}</div><div class="table-card"><table class="data-table"><thead><tr><th>شرکت</th><th>دوره</th><th>تعداد</th><th>مجموع حقوق</th><th>کل حق بیمه</th><th>وضعیت</th><th>عملیات</th></tr></thead><tbody>${rows||'<tr><td colspan="7" style="text-align:center;padding:20px;color:#64748b;">ثبتی وجود ندارد</td></tr>'}</tbody></table></div>`;
+      window.__ssoForm = () => { const compOpts = (companies||[]).map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join(''); const body=`<form id="ssoForm" style="display:grid;gap:12px;"><label>شرکت<select class="field" name="company_id" required><option value="">—</option>${compOpts}</select></label><label>دوره (۱۴۰۳/۰۱)<input class="field" name="period" required></label><div class="form-grid"><label>تعداد کارمند<input class="field" type="number" name="employee_count" value="0"></label><label>مجموع حقوق<input class="field" type="number" name="total_salary" value="0"></label></div><div class="form-grid"><label>سهم کارفرما<input class="field" type="number" name="employer_share" value="0"></label><label>سهم کارگر<input class="field" type="number" name="employee_share" value="0"></label></div><div style="display:flex;justify-content:flex-end;gap:8px;"><button type="button" class="btn soft" onclick="document.getElementById('modalRoot').innerHTML=''">انصراف</button><button type="submit" class="btn primary">ثبت</button></div></form>`; modal('ثبت تامین اجتماعی', '', body); document.getElementById('ssoForm').addEventListener('submit',async e=>{e.preventDefault();const fd=new FormData(e.currentTarget);const payload={company_id:fd.get('company_id'),period:fd.get('period'),employee_count:parseInt(fd.get('employee_count')||0),total_salary:parseFloat(fd.get('total_salary')||0),employer_share:parseFloat(fd.get('employer_share')||0),employee_share:parseFloat(fd.get('employee_share')||0),total_premium:parseFloat(fd.get('employer_share')||0)+parseFloat(fd.get('employee_share')||0)};try{await api('/sso/submissions',{method:'POST',body:JSON.stringify(payload)});document.getElementById('modalRoot').innerHTML='';toast('ثبت شد');renderSettings();}catch(err){toast(err.message,true);}}); };
+      window.__ssoDelete = async (id) => { if(!confirm('حذف ثبت؟')) return; try { await api(`/sso/submissions/${id}`, {method:'DELETE'}); toast('حذف شد'); renderSettings(); } catch(e){toast(e.message,true);} };
+    } catch(e) { container.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
+  }
+
+  // --- Proposals (پیشنهادها) ---
+  async function renderProposalsList(content, isAdmin) {
+    if (!content) return;
+    try {
+      const [proposals, companies] = await Promise.all([api('/proposals'), api('/companies').catch(()=>[])]);
+      const canManage = isAdmin;
+      const rows = (proposals||[]).map(p => `<tr><td><b>${esc(p.title)}</b></td><td>${esc(p.company_name||'—')}</td><td style="font-size:12px;">${num(Math.round(p.total_amount))} ریال</td><td>${({DRAFT:'<span style="color:#94a3b8;">پیش‌نویس</span>',SENT:'<span style="color:#3b82f6;">ارسال شد</span>',ACCEPTED:'<span style="color:#10b981;">تأیید شد</span>',REJECTED:'<span style="color:#ef4444;">رد شد</span>'}[p.status])||p.status}</td><td>${canManage?`<button class="btn small" style="background:#d1fae5;color:#065f46;" onclick="window.__acceptProposal('${p.id}')">تأیید</button><button class="btn small" style="background:#fee2e2;color:#991b1b;" onclick="window.__deleteProposal('${p.id}')">✗</button>`:''}</td></tr>`).join('');
+      content.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;"><div><h3 style="margin:0;">📋 پیشنهادها (${(proposals||[]).length})</h3><p class="hint" style="margin-top:2px;">پیشنهاد به مشتری + دریافت‌وجه خودکار</p></div>${canManage?'<button class="btn primary small" onclick="window.__proposalForm()">＋ پیشنهاد جدید</button>':''}</div><div class="table-card"><table class="data-table"><thead><tr><th>عنوان</th><th>شرکت</th><th>مبلغ</th><th>وضعیت</th><th>عملیات</th></tr></thead><tbody>${rows||'<tr><td colspan="5" style="text-align:center;padding:20px;color:#64748b;">پیشنهادی ثبت نشده</td></tr>'}</tbody></table></div>`;
+      window.__proposalForm = () => { const compOpts=(companies||[]).map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join(''); const body=`<form id="propForm" style="display:grid;gap:12px;"><label>عنوان <span style="color:#ef4444;">*</span><input class="field" name="title" required></label><label>شرکت <span style="color:#ef4444;">*</span><select class="field" name="company_id" required><option value="">—</option>${compOpts}</select></label><label>مبلغ (ریال)<input class="field" type="number" name="total_amount" value="0"></label><label>توضیحات<textarea class="field" name="description" rows="2"></textarea></label><div style="display:flex;justify-content:flex-end;gap:8px;"><button type="button" class="btn soft" onclick="document.getElementById('modalRoot').innerHTML=''">انصراف</button><button type="submit" class="btn primary">ایجاد</button></div></form>`; modal('＋ پیشنهاد جدید', '', body); document.getElementById('propForm').addEventListener('submit',async e=>{e.preventDefault();const fd=new FormData(e.currentTarget);try{await api('/proposals',{method:'POST',body:JSON.stringify({company_id:fd.get('company_id'),title:fd.get('title').trim(),total_amount:parseFloat(fd.get('total_amount')||0),description:fd.get('description').trim()})});document.getElementById('modalRoot').innerHTML='';toast('پیشنهاد ایجاد شد');renderCustomers();}catch(err){toast(err.message,true);}}); };
+      window.__acceptProposal = async (id) => { if(!confirm('تأیید پیشنهاد؟ مطالبات خودکار ساخته می‌شود.')) return; try { await api(`/proposals/${id}`,{method:'PATCH',body:JSON.stringify({})}); toast('پیشنهاد تأیید شد — مطالبات ساخته شد'); renderCustomers(); } catch(e){toast(e.message,true);} };
+      window.__deleteProposal = async (id) => { if(!confirm('حذف پیشنهاد؟')) return; try { await api(`/proposals/${id}`,{method:'DELETE'}); toast('حذف شد'); renderCustomers(); } catch(e){toast(e.message,true);} };
+    } catch(e) { content.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
+  }
+
+  // --- Bank Accounts (شبا) ---
+  async function renderBankAccountsList(content, isAdmin) {
+    if (!content) return;
+    try {
+      const [companies, banks] = await Promise.all([api('/companies').catch(()=>[]), api('/banks/list').catch(()=>({banks:{}}))]);
+      const canManage = isAdmin;
+      let allAccounts = [];
+      for (const c of companies) { try { const accts = await api(`/companies/${c.id}/bank-accounts`); for (const a of accts) { a.company_name = c.name; allAccounts.push(a); } } catch(e){} }
+      const rows = allAccounts.map(a => `<tr><td>${esc(a.company_name)}</td><td><code>${esc(a.sheba)}</code></td><td>${esc(a.bank_name)}</td><td>${esc(a.account_number||'—')}</td><td>${a.is_default?'<b>پیش‌فرض</b>':''}</td><td>${canManage?`<button class="btn small" style="background:#fee2e2;color:#991b1b;" onclick="window.__delBank('${a.company_id}','${a.id}')">✗</button>`:''}</td></tr>`).join('');
+      content.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;"><div><h3 style="margin:0;">🏦 حساب‌های بانکی / شبا (${allAccounts.length})</h3><p class="hint" style="margin-top:2px;">حساب‌های بانکی شرکت‌ها با کد شبا</p></div>${canManage?'<button class="btn primary small" onclick="window.__addBank()">＋ حساب جدید</button>':''}</div><div class="table-card"><table class="data-table"><thead><tr><th>شرکت</th><th>شبا</th><th>بانک</th><th>شماره حساب</th><th>پیش‌فرض</th><th>عملیات</th></tr></thead><tbody>${rows||'<tr><td colspan="6" style="text-align:center;padding:20px;color:#64748b;">حسابی ثبت نشده</td></tr>'}</tbody></table></div>`;
+      window.__addBank = () => { const compOpts=(companies||[]).map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join(''); const body=`<form id="bankForm" style="display:grid;gap:12px;"><label>شرکت<select class="field" name="company_id" required><option value="">—</option>${compOpts}</select></label><label>شماره شبا (IR...) <span style="color:#ef4444;">*</span><input class="field" name="sheba" required placeholder="IR123456789012345678901234"></label><label>شماره حساب<input class="field" name="account_number"></label><div style="display:flex;justify-content:flex-end;gap:8px;"><button type="button" class="btn soft" onclick="document.getElementById('modalRoot').innerHTML=''">انصراف</button><button type="submit" class="btn primary">ثبت</button></div></form>`; modal('＋ حساب بانکی', '', body); document.getElementById('bankForm').addEventListener('submit',async e=>{e.preventDefault();const fd=new FormData(e.currentTarget);try{await api(`/companies/${fd.get('company_id')}/bank-accounts`,{method:'POST',body:JSON.stringify({company_id:fd.get('company_id'),sheba:fd.get('sheba').trim(),account_number:fd.get('account_number').trim()})});document.getElementById('modalRoot').innerHTML='';toast('حساب ثبت شد');renderCustomers();}catch(err){toast(err.message,true);}}); };
+      window.__delBank = async (compId, accId) => { if(!confirm('حذف حساب؟')) return; try { await api(`/companies/${compId}/bank-accounts/${accId}`, {method:'DELETE'}); toast('حذف شد'); renderCustomers(); } catch(e){toast(e.message,true);} };
+    } catch(e) { content.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
+  }
+
+  // --- Document Requests (درخواست سند) ---
+  async function renderDocRequestsList(content, isAdmin) {
+    if (!content) return;
+    try {
+      const [docReqs, companies] = await Promise.all([api('/document-requests'), api('/companies').catch(()=>[])]);
+      const canManage = isAdmin;
+      const rows = (docReqs||[]).map(d => `<tr><td><b>${esc(d.title)}</b></td><td>${esc(d.company_name||'—')}</td><td>${d.total_items||0} مورد</td><td>${d.uploaded_items||0} آپلود شده</td><td>${({OPEN:'<span style="color:#f59e0b;">باز</span>',PARTIAL:'<span style="color:#3b82f6;">جزئی</span>',COMPLETED:'<span style="color:#10b981;">کامل</span>'}[d.status])||d.status}</td><td>${canManage?`<button class="btn soft small" onclick="window.__viewDocReq('${d.id}')">👁</button><button class="btn small" style="background:#fee2e2;color:#991b1b;" onclick="window.__delDocReq('${d.id}')">✗</button>`:''}</td></tr>`).join('');
+      content.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;"><div><h3 style="margin:0;">📥 درخواست سند (${(docReqs||[]).length})</h3><p class="hint" style="margin-top:2px;">درخواست اسناد از مشتریان با ردیابی آیتم</p></div>${canManage?'<button class="btn primary small" onclick="window.__docReqForm()">＋ درخواست جدید</button>':''}</div><div class="table-card"><table class="data-table"><thead><tr><th>عنوان</th><th>شرکت</th><th>کل موارد</th><th>آپلود شده</th><th>وضعیت</th><th>عملیات</th></tr></thead><tbody>${rows||'<tr><td colspan="6" style="text-align:center;padding:20px;color:#64748b;">درخواستی ثبت نشده</td></tr>'}</tbody></table></div>`;
+      window.__docReqForm = () => { const compOpts=(companies||[]).map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join(''); const body=`<form id="docReqForm" style="display:grid;gap:12px;"><label>عنوان <span style="color:#ef4444;">*</span><input class="field" name="title" required placeholder="اسناد مالی فروردین ۱۴۰۳"></label><label>شرکت <span style="color:#ef4444;">*</span><select class="field" name="company_id" required><option value="">—</option>${compOpts}</select></label><label>موارد درخواست (هر خط یک سند)<textarea class="field" name="items" rows="5" placeholder="صورت وضعیت بانکی&#10;لیست فروش&#10;اسناد هزینه"></textarea></label><div style="display:flex;justify-content:flex-end;gap:8px;"><button type="button" class="btn soft" onclick="document.getElementById('modalRoot').innerHTML=''">انصراف</button><button type="submit" class="btn primary">ایجاد</button></div></form>`; modal('＋ درخواست سند', '', body); document.getElementById('docReqForm').addEventListener('submit',async e=>{e.preventDefault();const fd=new FormData(e.currentTarget);const items=fd.get('items').split('\n').map(s=>s.trim()).filter(Boolean).map(s=>({document_name:s}));try{await api('/document-requests',{method:'POST',body:JSON.stringify({company_id:fd.get('company_id'),title:fd.get('title').trim(),items})});document.getElementById('modalRoot').innerHTML='';toast('درخواست ایجاد شد');renderCustomers();}catch(err){toast(err.message,true);}}); };
+      window.__viewDocReq = async (id) => { try { const d = await api(`/document-requests/${id}`); const items=(d.items||[]).map(i=>`<tr><td>${esc(i.document_name)}</td><td>${({PENDING:'در انتظار',UPLOADED:'آپلود شد',APPROVED:'تأیید شد',REJECTED:'رد شد'}[i.status])||i.status}</td></tr>`).join(''); modal(`درخواست: ${esc(d.title)}`, '', `<div class="table-card"><table class="data-table"><thead><tr><th>سند</th><th>وضعیت</th></tr></thead><tbody>${items}</tbody></table></div>`); } catch(e){toast(e.message,true);} };
+      window.__delDocReq = async (id) => { if(!confirm('حذف درخواست؟')) return; try { await api(`/document-requests/${id}`, {method:'DELETE'}); toast('حذف شد'); renderCustomers(); } catch(e){toast(e.message,true);} };
+    } catch(e) { content.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
+  }
+
+  // --- Analytics (تحلیل پیش‌بینانه) ---
+  async function renderAnalyticsTab(container) {
+    if (!container) return;
+    try {
+      const [risk, profitability, capacity, revenue] = await Promise.all([api('/analytics/client-risk'), api('/analytics/client-profitability'), api('/analytics/team-capacity'), api('/analytics/revenue')]);
+      let html = '<div style="display:grid;gap:20px;">';
+      // Risk
+      html += '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;"><h3 style="margin:0 0 12px;">⚠ امتیاز ریسک مشتریان</h3><div class="table-card"><table class="data-table"><thead><tr><th>شرکت</th><th>مانده</th><th>سررسید گذشته</th><th>تسک عقب‌افتاده</th><th>ریسک</th></tr></thead><tbody>';
+      (risk||[]).forEach(r => { html += `<tr><td>${esc(r.name)}</td><td style="font-size:12px;">${num(Math.round(r.outstanding))}</td><td>${r.overdue_count||0}</td><td>${r.overdue_tasks||0}</td><td><span style="background:${r.risk_level==='high'?'#fee2e2':r.risk_level==='medium'?'#fef3c7':'#dcfce7'};color:${r.risk_level==='high'?'#ef4444':r.risk_level==='medium'?'#92400e':'#16a34a'};padding:2px 10px;border-radius:999px;font-size:11px;">${r.risk_score} (${r.risk_level})</span></td></tr>`; });
+      html += '</tbody></table></div></div>';
+      // Capacity
+      html += '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;"><h3 style="margin:0 0 12px;">👥 ظرفیت تیم</h3><div class="table-card"><table class="data-table"><thead><tr><th>کارمند</th><th>کل تسک</th><th>در حال انجام</th><th>عقب‌افتاده</th><th>ساعت کار</th><th>ظرفیت</th></tr></thead><tbody>';
+      (capacity||[]).forEach(c => { html += `<tr><td><b>${esc(c.name)}</b></td><td>${c.total_tasks}</td><td>${c.in_progress}</td><td style="color:${c.overdue>0?'#ef4444':'#64748b'};">${c.overdue}</td><td>${c.total_hours}</td><td>${c.capacity_utilization}%</td></tr>`; });
+      html += '</tbody></table></div></div>';
+      // Revenue
+      if (revenue && revenue.period_data) {
+        html += '<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;"><h3 style="margin:0 0 12px;">📊 تحلیل درآمد</h3><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px;">';
+        html += `<div style="background:#f0fdf4;padding:12px;border-radius:8px;text-align:center;"><div style="font-size:11px;color:#64748b;">کل صورتحساب</div><div style="font-size:18px;font-weight:700;color:#16a34a;">${num(Math.round(revenue.total_billed))}</div></div>`;
+        html += `<div style="background:#dcfce7;padding:12px;border-radius:8px;text-align:center;"><div style="font-size:11px;color:#64748b;">دریافت شده</div><div style="font-size:18px;font-weight:700;color:#065f46;">${num(Math.round(revenue.total_collected))}</div></div>`;
+        html += `<div style="background:#fef3c7;padding:12px;border-radius:8px;text-align:center;"><div style="font-size:11px;color:#64748b;">نرخ وصول</div><div style="font-size:18px;font-weight:700;color:#92400e;">${revenue.collection_rate}%</div></div></div>`;
+        html += '<div class="table-card"><table class="data-table"><thead><tr><th>دوره</th><th>صورتحساب</th><th>دریافت</th><th>رشد</th></tr></thead><tbody>';
+        revenue.period_data.forEach(p => { html += `<tr><td style="font-size:12px;">${p.period}</td><td style="font-size:12px;">${num(Math.round(p.billed))}</td><td style="font-size:12px;">${num(Math.round(p.collected))}</td><td style="font-size:12px;color:${p.growth_rate>0?'#10b981':'#ef4444'};">${p.growth_rate>0?'+':''}${p.growth_rate}%</td></tr>`; });
+        html += '</tbody></table></div></div>';
+      }
+      container.innerHTML = html + '</div>';
+    } catch(e) { container.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
+  }
+
+  // --- Activity Feed (خط زمانی فعالیت) ---
+  async function renderActivityFeedTab(container) {
+    if (!container) return;
+    try {
+      const events = await api('/activity-feed?limit=50');
+      const rows = (events||[]).map(e => `<div style="border-right:2px solid #16a34a;padding:8px 14px;margin-bottom:8px;"><div style="font-size:12px;"><b>${esc(e.user)}</b> — ${esc(e.description)}</div><div style="font-size:10px;color:#94a3b8;">${timeFmt(e.timestamp)}</div></div>`).join('');
+      container.innerHTML = `<div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;"><h3 style="margin:0 0 16px;">📜 خط زمانی فعالیت</h3>${rows || '<p style="color:#94a3b8;text-align:center;padding:20px;">فعالیتی ثبت نشده</p>'}</div>`;
+    } catch(e) { container.innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
+  }
+
+  // --- AI Q&A (پرسش از اسناد) ---
+  async function renderAITab() {
+    // Add AI tab to Settings
+  }
 
   // ============ SYSTEM UPDATE TAB (Settings → به‌روزرسانی سامانه) ============
   async function renderSystemUpdateTab(container) {

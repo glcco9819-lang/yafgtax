@@ -1477,7 +1477,7 @@ def service_worker():
 @app.get("/api/status")
 def status():
     with db() as con:
-        return {"setup_needed": con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0, "product": "YFG Accounting Desk", "version": "0.3.0.18"}
+        return {"setup_needed": con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0, "product": "YFG Accounting Desk", "version": "0.3.0.19"}
 
 
 @app.post("/api/setup")
@@ -5197,7 +5197,7 @@ import tempfile
 import urllib.request
 import subprocess
 
-SYSTEM_VERSION = "0.3.0.18"
+SYSTEM_VERSION = "0.3.0.19"
 SYSTEM_REPO_URL = "https://github.com/glcco9819-lang/yafgtax.git"
 SYSTEM_UPDATE_DIR = ROOT / "updates"  # temporary download location
 SYSTEM_BACKUP_DIR = DATA / "backups"
