@@ -476,7 +476,7 @@
 [data-theme="night"] [style*="background:#10b981"] { background: #14b8a6 !important; color: #070c11 !important; }
 [data-theme="night"] [style*="background:#f59e0b"] { background: #fbbf24 !important; color: #070c11 !important; }
 [data-theme="night"] [style*="background:#ef4444"] { background: #f87171 !important; color: #ffffff !important; }
-[data-theme="night"] [style*="background:#0b8f89"] { background: #14b8a6 !important; color: #070c11 !important; }
+[data-theme="night"] [style*="background:#16a34a"] { background: #14b8a6 !important; color: #070c11 !important; }
 
 /* KPI progress bars (inline styled) */
 [data-theme="night"] [style*="background:#f1f5f9"] { background: rgba(255,255,255,0.06) !important; }
@@ -570,7 +570,7 @@
 .yfg-theme-toggle:hover {
   background: rgba(11, 143, 137, 0.08) !important;
   border-color: #b7d9d5 !important;
-  color: #0b8f89 !important;
+  color: #16a34a !important;
 }
 [data-theme="day"] .yfg-theme-toggle .theme-label { color: #75858b; }
 

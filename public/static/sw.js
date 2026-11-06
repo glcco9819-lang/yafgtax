@@ -1,4 +1,4 @@
-// YFG Service Worker v29 — version 0.3.0.17 — one-click update+restart
+// YFG Service Worker v29 — version 0.3.0.18 — one-click update+restart
 const CACHE='yfg-desk-v29';
 const ASSETS=['/','/static/style.css','/static/themes.css','/static/app.js','/static/performance.js','/static/enhanced.js','/static/themes.js','/static/icon.svg','/static/icon-192.png','/static/icon-512.png','/manifest.webmanifest'];
 

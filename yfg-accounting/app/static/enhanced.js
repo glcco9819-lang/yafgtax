@@ -2,7 +2,7 @@
 // Adds: Dashboard Charts, Kanban View, Time Tracking, Chat, Automations, ISO 30414
 
   
-  const CHART_COLORS = ['#0b8f89','#f59e0b','#ef4444','#8b5cf6','#3b82f6','#10b981','#ec4899','#f97316'];
+  const CHART_COLORS = ['#16a34a','#f59e0b','#ef4444','#8b5cf6','#3b82f6','#10b981','#ec4899','#f97316'];
   let charts = {};
   let timerInterval = null;
   let timerStart = null;
@@ -134,7 +134,7 @@
     if (document.getElementById('timerWidget')) return;
     const widget = document.createElement('div');
     widget.id = 'timerWidget';
-    widget.style.cssText = 'position:fixed;bottom:20px;left:20px;z-index:100;background:#0b8f89;color:#fff;padding:12px 20px;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,0.2);font-size:14px;display:none;';
+    widget.style.cssText = 'position:fixed;bottom:20px;left:20px;z-index:100;background:#16a34a;color:#fff;padding:12px 20px;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,0.2);font-size:14px;display:none;';
     widget.innerHTML = `<div style="display:flex;align-items:center;gap:10px;"><span id="timerDisplay" style="font-family:monospace;font-size:18px;">00:00:00</span><button id="timerStopBtn" style="background:#ef4444;color:#fff;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-size:12px;">توقف</button></div><div id="timerTask" style="font-size:11px;margin-top:4px;opacity:0.8;"></div>`;
     document.body.appendChild(widget);
     document.getElementById('timerStopBtn')?.addEventListener('click', stopTimer);
@@ -213,7 +213,7 @@
       }
       const ct = data.company_tasks || [];
       if (typeof Chart !== 'undefined' && ct.length) {
-        charts.company = new Chart(document.getElementById('chartCompany'), {type:'bar',data:{labels:ct.map(c=>c.name),datasets:[{label:'تعداد تسک',data:ct.map(c=>c.count),backgroundColor:'#0b8f89'}]},options:{responsive:true,plugins:{legend:{display:false}}}});
+        charts.company = new Chart(document.getElementById('chartCompany'), {type:'bar',data:{labels:ct.map(c=>c.name),datasets:[{label:'تعداد تسک',data:ct.map(c=>c.count),backgroundColor:'#16a34a'}]},options:{responsive:true,plugins:{legend:{display:false}}}});
       }
       const wl = data.employee_workload || [];
       if (typeof Chart !== 'undefined' && wl.length) {
@@ -304,7 +304,7 @@
         const isDirect = ch.kind === 'DIRECT';
         const icon = isDirect ? '👤' : '👥';
         const unread = ch.unread_count > 0 ? `<span style="background:#ef4444;color:#fff;font-size:10px;padding:1px 7px;border-radius:10px;margin-right:6px;">${ch.unread_count}</span>` : '';
-        return `<div onclick="window.__chatOpen('${ch.id}')" id="chatItem-${ch.id}" style="padding:11px 12px;border-radius:10px;cursor:pointer;margin-bottom:6px;background:#fff;transition:all .15s;${chatCurrentChannel===ch.id?'border-right:3px solid #0b8f89;background:#f0fdfa;':''}">
+        return `<div onclick="window.__chatOpen('${ch.id}')" id="chatItem-${ch.id}" style="padding:11px 12px;border-radius:10px;cursor:pointer;margin-bottom:6px;background:#fff;transition:all .15s;${chatCurrentChannel===ch.id?'border-right:3px solid #16a34a;background:#f0fdf4;':''}">
           <div style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;">
             <span style="font-size:14px;">${icon}</span>
             <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(ch.display_name||ch.name||'گفتگو')}</span>
@@ -409,7 +409,7 @@
         // Update selected styling
         $$('[id^="chatItem-"]').forEach(e=>e.style.background='#fff');
         const item = document.getElementById(`chatItem-${chId}`);
-        if (item) { item.style.background='#f0fdfa'; item.style.borderRight='3px solid #0b8f89'; }
+        if (item) { item.style.background='#f0fdf4'; item.style.borderRight='3px solid #16a34a'; }
         try {
           const ch = await api(`/chat/channels/${chId}`);
           const msgs = await api(`/chat/channels/${chId}/messages`);
@@ -573,7 +573,7 @@
           }
           const att = m.attachment_name ? `<a href="/api/chat/attachments/${m.attachment_id}" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,0.18);padding:6px 10px;border-radius:6px;font-size:12px;text-decoration:none;color:inherit;margin-top:6px;">📎 ${esc(m.attachment_name)} <span style="opacity:0.6;">(${m.attachment_size?(m.attachment_size/1024).toFixed(1)+'KB':''})</span></a>` : '';
           return `<div style="margin-bottom:14px;display:flex;justify-content:${mine?'flex-end':'flex-start'};">
-            <div style="max-width:70%;padding:10px 14px;border-radius:14px;background:${mine?'#0b8f89':'#ffffff'};color:${mine?'#fff':'#0f172a'};box-shadow:0 1px 2px rgba(0,0,0,0.06);border:1px solid ${mine?'transparent':'#e2e8f0'};">
+            <div style="max-width:70%;padding:10px 14px;border-radius:14px;background:${mine?'#16a34a':'#ffffff'};color:${mine?'#fff':'#0f172a'};box-shadow:0 1px 2px rgba(0,0,0,0.06);border:1px solid ${mine?'transparent':'#e2e8f0'};">
               <div style="font-size:11px;opacity:${mine?0.8:0.6};margin-bottom:4px;font-weight:600;">${mine?'شما':esc(m.user_name)}</div>
               ${m.body?`<div style="font-size:13px;line-height:1.6;white-space:pre-wrap;word-wrap:break-word;">${esc(m.body)}</div>`:''}
               ${att}
@@ -590,7 +590,7 @@
   function openChatUserPicker(title, sub, users, onPick) {
     const list = (users||[]).map(u=>`
       <div onclick="window.__pickUser('${u.id}','${esc(u.name)}')" style="padding:10px 12px;border-radius:8px;background:#fff;border:1px solid #e2e8f0;margin-bottom:6px;cursor:pointer;display:flex;align-items:center;gap:10px;">
-        <div style="width:34px;height:34px;border-radius:50%;background:#0b8f89;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:13px;">${esc(u.name?.charAt(0))}</div>
+        <div style="width:34px;height:34px;border-radius:50%;background:#16a34a;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:13px;">${esc(u.name?.charAt(0))}</div>
         <div><div style="font-size:13px;font-weight:600;">${esc(u.name)}</div><div style="font-size:11px;color:#94a3b8;">${labels[u.role]||u.role}</div></div>
       </div>`).join('');
     window.__pickUser = (uid, uname) => { document.getElementById('modalRoot').innerHTML=''; onPick(uid); };
@@ -766,7 +766,7 @@
         quality: 'کیفیت', ontime: 'به‌موقعی', volume: 'حجم کار',
         collaboration: 'همکاری', satisfaction: 'رضایت', custom: 'سفارشی',
       };
-      const GRADE_COLORS = {'عالی':'#10b981','خوب':'#0b8f89','متوسط':'#f59e0b','ضعیف':'#ef4444'};
+      const GRADE_COLORS = {'عالی':'#10b981','خوب':'#16a34a','متوسط':'#f59e0b','ضعیف':'#ef4444'};
       const STATUS_COLORS = {PASS:'#10b981', FAIL:'#ef4444', PENDING:'#94a3b8'};
       section.innerHTML = `
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px;">
@@ -827,7 +827,7 @@
                     <td><span class="pill" style="background:#e0f2fe;color:#0c4a6e;padding:2px 8px;border-radius:6px;font-size:11px;">${esc(KPI_CAT_LABELS[s.category]||s.category)}</span></td>
                     <td>${s.target_value} ${esc(s.unit)}</td>
                     <td><b>${s.weight}</b></td>
-                    <td><b style="color:#0b8f89;">${s.avg_value} ${esc(s.unit)}</b></td>
+                    <td><b style="color:#16a34a;">${s.avg_value} ${esc(s.unit)}</b></td>
                     <td style="color:#ef4444;">${s.min_value}</td>
                     <td style="color:#10b981;">${s.max_value}</td>
                   </tr>
@@ -895,7 +895,7 @@
     try {
       const me = state.me || await api('/me');
       const data = await api(`/performance/kpi-report/${me.id}`);
-      const GRADE_COLORS = {'عالی':'#10b981','خوب':'#0b8f89','متوسط':'#f59e0b','ضعیف':'#ef4444'};
+      const GRADE_COLORS = {'عالی':'#10b981','خوب':'#16a34a','متوسط':'#f59e0b','ضعیف':'#ef4444'};
       const STATUS_COLORS = {PASS:'#10b981', FAIL:'#ef4444', PENDING:'#94a3b8'};
       section.innerHTML = `
         <div style="margin-bottom:16px;">
@@ -930,7 +930,7 @@
                     <td><b>${esc(k.name)}</b></td>
                     <td style="max-width:200px;"><small style="color:#64748b;">${esc(k.description||'').substring(0,80)}</small></td>
                     <td>${k.target_value} ${esc(k.unit)} <small>(${esc(k.operator)})</small></td>
-                    <td><b style="color:#0b8f89;font-size:15px;">${k.current_value} ${esc(k.unit)}</b></td>
+                    <td><b style="color:#16a34a;font-size:15px;">${k.current_value} ${esc(k.unit)}</b></td>
                     <td>
                       <div style="display:flex;align-items:center;gap:6px;">
                         <div style="width:60px;height:6px;background:#f1f5f9;border-radius:3px;overflow:hidden;">
@@ -961,7 +961,7 @@
   async function userKPIDetail(uid) {
     try {
       const data = await api(`/performance/kpi-report/${uid}`);
-      const GRADE_COLORS = {'عالی':'#10b981','خوب':'#0b8f89','متوسط':'#f59e0b','ضعیف':'#ef4444'};
+      const GRADE_COLORS = {'عالی':'#10b981','خوب':'#16a34a','متوسط':'#f59e0b','ضعیف':'#ef4444'};
       const STATUS_COLORS = {PASS:'#10b981', FAIL:'#ef4444', PENDING:'#94a3b8'};
       const root = document.getElementById('modalRoot');
       if (!root) { alert('modalRoot not found'); return; }
@@ -984,7 +984,7 @@
               </div>
               <div style="background:#f8fafc;border-radius:10px;padding:14px;text-align:center;">
                 <small style="color:#64748b;">مجموع وزن</small>
-                <div style="font-size:28px;font-weight:700;color:#0b8f89;">${data.weight_total}</div>
+                <div style="font-size:28px;font-weight:700;color:#16a34a;">${data.weight_total}</div>
                 <small style="color:#64748b;">از ۱۰۰</small>
               </div>
             </div>
@@ -998,7 +998,7 @@
                   <tr style="border-bottom:1px solid #f1f5f9;">
                     <td style="padding:8px;text-align:right;"><b>${esc(k.name)}</b><br><small style="color:#64748b;">${esc(k.description||'').substring(0,60)}</small></td>
                     <td style="text-align:center;">${k.target_value} ${esc(k.unit)}</td>
-                    <td style="text-align:center;color:#0b8f89;font-weight:bold;">${k.current_value} ${esc(k.unit)}</td>
+                    <td style="text-align:center;color:#16a34a;font-weight:bold;">${k.current_value} ${esc(k.unit)}</td>
                     <td style="text-align:center;">${Math.round(k.ratio*100)}%</td>
                     <td style="text-align:center;">${k.weight}</td>
                     <td style="text-align:center;color:${STATUS_COLORS[k.status]||'#94a3b8'};font-weight:bold;">${k.contribution}</td>
@@ -1171,7 +1171,7 @@
         <td>${esc(p.national_id || '—')}</td>
         <td>${esc(p.phone || '—')}</td>
         <td>${esc(p.email || '—')}</td>
-        <td>${p.linked_company_name ? `<span class="tag" style="background:#f0fdfa;color:#0b8f89;">${esc(p.linked_company_name)}</span>` : '—'}</td>
+        <td>${p.linked_company_name ? `<span class="tag" style="background:#f0fdf4;color:#16a34a;">${esc(p.linked_company_name)}</span>` : '—'}</td>
         <td>${p.active ? '<span style="color:#10b981;">● فعال</span>' : '<span style="color:#94a3b8;">○ غیرفعال</span>'}</td>
         <td>
           ${isAdmin ? `
@@ -1351,9 +1351,9 @@
         const body = `
         <form id="custCompanyForm" style="display:grid;gap:12px;">
           <div style="display:flex;gap:8px;">
-            <label class="check-row" style="flex:1;padding:10px;border:2px solid ${kind === 'LEGAL' ? '#0b8f89' : '#cbd5e1'};border-radius:10px;cursor:pointer;">
+            <label class="check-row" style="flex:1;padding:10px;border:2px solid ${kind === 'LEGAL' ? '#16a34a' : '#cbd5e1'};border-radius:10px;cursor:pointer;">
               <input type="radio" name="kind" value="LEGAL" ${kind === 'LEGAL' ? 'checked' : ''}> 🏢 شخص حقوقی (شرکت)</label>
-            <label class="check-row" style="flex:1;padding:10px;border:2px solid ${kind === 'REAL' ? '#0b8f89' : '#cbd5e1'};border-radius:10px;cursor:pointer;">
+            <label class="check-row" style="flex:1;padding:10px;border:2px solid ${kind === 'REAL' ? '#16a34a' : '#cbd5e1'};border-radius:10px;cursor:pointer;">
               <input type="radio" name="kind" value="REAL" ${kind === 'REAL' ? 'checked' : ''}> 👤 شخص حقیقی</label>
           </div>
           <div id="custLegalRow" style="display:grid;gap:12px;">
@@ -1467,7 +1467,7 @@
   const CONTRACT_STATUS_LABELS = {
     DRAFT: {label:'پیش‌نویس', color:'#94a3b8', bg:'#f1f5f9'},
     ACTIVE: {label:'فعال', color:'#10b981', bg:'#d1fae5'},
-    COMPLETED: {label:'تکمیل‌شده', color:'#0b8f89', bg:'#f0fdfa'},
+    COMPLETED: {label:'تکمیل‌شده', color:'#16a34a', bg:'#f0fdf4'},
     TERMINATED: {label:'فسخ‌شده', color:'#ef4444', bg:'#fee2e2'},
   };
   const PROFORMA_STATUS_LABELS = {
@@ -2118,7 +2118,7 @@
       }).join('');
       content.innerHTML = `
         ${summary ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:16px;">
-          <div style="background:#f0fdfa;padding:12px;border-radius:8px;text-align:center;"><div style="font-size:11px;color:#64748b;">کل مطالبات</div><div style="font-size:18px;font-weight:700;color:#0b8f89;">${num(Math.round(summary.total_amount||0))}</div><div style="font-size:10px;">ریال</div></div>
+          <div style="background:#f0fdf4;padding:12px;border-radius:8px;text-align:center;"><div style="font-size:11px;color:#64748b;">کل مطالبات</div><div style="font-size:18px;font-weight:700;color:#16a34a;">${num(Math.round(summary.total_amount||0))}</div><div style="font-size:10px;">ریال</div></div>
           <div style="background:#d1fae5;padding:12px;border-radius:8px;text-align:center;"><div style="font-size:11px;color:#64748b;">دریافت‌شده</div><div style="font-size:18px;font-weight:700;color:#065f46;">${num(Math.round(summary.paid_amount||0))}</div><div style="font-size:10px;">ریال</div></div>
           <div style="background:#fee2e2;padding:12px;border-radius:8px;text-align:center;"><div style="font-size:11px;color:#64748b;">مانده</div><div style="font-size:18px;font-weight:700;color:#ef4444;">${num(Math.round(summary.outstanding||0))}</div><div style="font-size:10px;">ریال</div></div>
           <div style="background:#fef3c7;padding:12px;border-radius:8px;text-align:center;"><div style="font-size:11px;color:#64748b;">تعداد پرداخت‌نشده</div><div style="font-size:18px;font-weight:700;color:#92400e;">${summary.count_unpaid||0}</div></div>
@@ -2206,7 +2206,7 @@
           <td>${({DRAFT:'<span style="color:#94a3b8;">پیش‌نویس</span>',PENDING:'<span style="color:#f59e0b;">در انتظار</span>',SENT:'<span style="color:#3b82f6;">ارسال شد</span>',ACCEPTED:'<span style="color:#10b981;">تأیید شد</span>',REJECTED:'<span style="color:#ef4444;">رد شد</span>',CANCELLED:'<span style="color:#94a3b8;">ابطال</span>'}[m.status])||m.status}</td>
           <td>
             ${canManage ? `<button class="btn soft small" onclick="window.__moudianForm('${m.id}')">✎</button>` : ''}
-            ${canManage && m.status==='DRAFT' ? `<button class="btn primary small" style="background:#0b8f89;" onclick="window.__moudianSubmit('${m.id}')">📤 ارسال به مودیان</button>` : ''}
+            ${canManage && m.status==='DRAFT' ? `<button class="btn primary small" style="background:#16a34a;" onclick="window.__moudianSubmit('${m.id}')">📤 ارسال به مودیان</button>` : ''}
             ${canManage ? `<button class="btn small" style="background:#fee2e2;color:#991b1b;" onclick="window.__moudianDelete('${m.id}')">✗</button>` : ''}
           </td>
         </tr>`;
@@ -2371,7 +2371,7 @@
       const combined = kpiPart != null ? Math.round(taskPart * 0.5 + kpiPart * 0.5) : (r.simple_score != null ? Math.round(taskPart) : null);
       return {...r, kpi_score: kpiPart, kpi_grade: k?.grade || null, combined};
     }).sort((a, b) => (b.combined ?? -1) - (a.combined ?? -1));
-    const GRADE_COLORS = {'عالی':'#10b981','خوب':'#0b8f89','متوسط':'#f59e0b','ضعیف':'#ef4444'};
+    const GRADE_COLORS = {'عالی':'#10b981','خوب':'#16a34a','متوسط':'#f59e0b','ضعیف':'#ef4444'};
     container.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
         <div><h3 style="margin:0;">♙ عملکرد کارکنان</h3><p class="hint" style="margin-top:2px;">ترکیب نمرهٔ تسک‌ها (۵۰٪) و امتیاز KPI (۵۰٪) برای هر کارمند — مرتب‌شده بر اساس امتیاز کل.</p></div>
@@ -2392,7 +2392,7 @@
                 <td>${r.kpi_score != null ? `<b style="color:${GRADE_COLORS[r.kpi_grade] || '#64748b'};">${r.kpi_score}</b><small style="color:#64748b;"> /۱۰۰</small> ${r.kpi_grade ? `<span class="pill" style="background:${GRADE_COLORS[r.kpi_grade] || '#94a3b8'};color:#fff;padding:1px 8px;border-radius:999px;font-size:10px;">${esc(r.kpi_grade)}</span>` : ''}` : '<span style="color:#94a3b8;">—</span>'}</td>
                 <td>
                   ${r.combined != null ? `<div style="display:flex;align-items:center;gap:8px;">
-                    <div style="width:70px;height:8px;background:#f1f5f9;border-radius:4px;overflow:hidden;"><div style="width:${Math.min(100, r.combined)}%;height:100%;background:#0b8f89;"></div></div>
+                    <div style="width:70px;height:8px;background:#f1f5f9;border-radius:4px;overflow:hidden;"><div style="width:${Math.min(100, r.combined)}%;height:100%;background:#16a34a;"></div></div>
                     <b>${num(r.combined)}</b><small style="color:#64748b;">/۱۰۰</small></div>` : '<span style="color:#94a3b8;">—</span>'}
                 </td>
                 <td>
@@ -2523,9 +2523,9 @@
           <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;">
             <h3 style="margin:0 0 16px;">🔄 به‌روزرسانی سامانه</h3>
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px;">
-              <div style="background:#f0fdfa;padding:14px;border-radius:10px;text-align:center;">
+              <div style="background:#f0fdf4;padding:14px;border-radius:10px;text-align:center;">
                 <div style="font-size:11px;color:#64748b;margin-bottom:4px;">نسخه فعلی</div>
-                <div style="font-size:20px;font-weight:700;color:#0b8f89;">${esc(currentVer)}</div>
+                <div style="font-size:20px;font-weight:700;color:#16a34a;">${esc(currentVer)}</div>
               </div>
               <div style="background:#fef3c7;padding:14px;border-radius:10px;text-align:center;">
                 <div style="font-size:11px;color:#64748b;margin-bottom:4px;">آخرین نسخه</div>
@@ -2916,7 +2916,7 @@
         <button class="btn primary small" onclick="window.__editKPI()">＋ شاخص جدید</button>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
-        <span class="pill" style="background:#0b8f89;color:#fff;padding:4px 12px;border-radius:999px;font-size:12px;">مجموع وزن: ${totalWeight}</span>
+        <span class="pill" style="background:#16a34a;color:#fff;padding:4px 12px;border-radius:999px;font-size:12px;">مجموع وزن: ${totalWeight}</span>
         <span class="pill" style="background:${totalWeight===100?'#10b981':'#f59e0b'};color:#fff;padding:4px 12px;border-radius:999px;font-size:12px;">${totalWeight===100?'وزن‌دهی استاندارد':'وزن باید ۱۰۰ باشد'}</span>
       </div>
       <p class="hint" style="margin-bottom:12px;color:#64748b;font-size:13px;">شاخص‌های کلیدی عملکرد (KPI) معیارهای ارزیابی پرسنل هستند. وزن کل باید ۱۰۰ باشد. مدیر می‌تواند شاخص دلخواه بسازد.</p>
@@ -2936,7 +2936,7 @@
                 <td><b>${esc(k.name)}</b><div style="font-size:11px;color:#64748b;">${esc(k.description||'').substring(0,80)}</div></td>
                 <td><span class="pill" style="background:#e0f2fe;color:#0c4a6e;padding:2px 8px;border-radius:6px;font-size:11px;">${esc(cat)}</span></td>
                 <td><b>${op}</b> ${k.target_value} ${esc(k.unit)}</td>
-                <td><b style="color:${k.weight>=20?'#0b8f89':'#64748b'};">${k.weight}</b></td>
+                <td><b style="color:${k.weight>=20?'#16a34a':'#64748b'};">${k.weight}</b></td>
                 <td>${esc(freq)}</td>
                 <td>${esc(role)}</td>
                 <td>${k.active?('<span style="color:#10b981;">✓ فعال</span>'):('<span style="color:#ef4444;">✗ غیرفعال</span>')}</td>
@@ -3097,7 +3097,7 @@
             <div style="display:grid;gap:10px;font-size:14px;">
               <div style="display:flex;justify-content:space-between;padding:10px;background:#f8fafc;border-radius:8px;"><span>دسته:</span><b>${esc(r.category)}</b></div>
               <div style="display:flex;justify-content:space-between;padding:10px;background:#f8fafc;border-radius:8px;"><span>مقدار هدف:</span><b>${r.target_value} ${esc(r.unit)} (${esc(r.operator)})</b></div>
-              <div style="display:flex;justify-content:space-between;padding:10px;background:#f8fafc;border-radius:8px;"><span>مقدار فعلی:</span><b style="color:#0b8f89;font-size:18px;">${r.current_value.toFixed(2)} ${esc(r.unit)}</b></div>
+              <div style="display:flex;justify-content:space-between;padding:10px;background:#f8fafc;border-radius:8px;"><span>مقدار فعلی:</span><b style="color:#16a34a;font-size:18px;">${r.current_value.toFixed(2)} ${esc(r.unit)}</b></div>
               <div style="display:flex;justify-content:space-between;padding:12px;background:${r.status==='PASS'?'#dcfce7':'#fee2e2'};border-radius:8px;">
                 <span>وضعیت:</span>
                 <b style="color:${r.status==='PASS'?'#166534':'#991b1b'};font-size:16px;">${r.status==='PASS'?'✓ هدف محقق':'✗ زیر هدف'}</b>
@@ -3273,9 +3273,9 @@ function __companyForm(id) {
     const body = `
     <form id="companyForm2" style="display:grid;gap:12px;">
       <div style="display:flex;gap:8px;">
-        <label class="check-row" style="flex:1;padding:10px;border:2px solid ${kind === 'LEGAL' ? '#0b8f89' : '#cbd5e1'};border-radius:10px;cursor:pointer;">
+        <label class="check-row" style="flex:1;padding:10px;border:2px solid ${kind === 'LEGAL' ? '#16a34a' : '#cbd5e1'};border-radius:10px;cursor:pointer;">
           <input type="radio" name="kind" value="LEGAL" ${kind === 'LEGAL' ? 'checked' : ''}> 🏢 شخص حقوقی (شرکت)</label>
-        <label class="check-row" style="flex:1;padding:10px;border:2px solid ${kind === 'REAL' ? '#0b8f89' : '#cbd5e1'};border-radius:10px;cursor:pointer;">
+        <label class="check-row" style="flex:1;padding:10px;border:2px solid ${kind === 'REAL' ? '#16a34a' : '#cbd5e1'};border-radius:10px;cursor:pointer;">
           <input type="radio" name="kind" value="REAL" ${kind === 'REAL' ? 'checked' : ''}> 👤 شخص حقیقی</label>
       </div>
       <div id="legalNameRow" style="display:grid;gap:12px;">
@@ -3358,7 +3358,7 @@ async function renderUsersRich(container) {
       <td style="font-size:12px;">${esc(u.phone) || '—'}</td>
       <td><span class="tag">${ROLE_LABELS2[u.role] || u.role}</span></td>
       <td style="max-width:220px;font-size:12px;">${accessMap[u.id]?.length
-        ? `<span class="pill" style="background:#0b8f89;color:#fff;padding:2px 10px;border-radius:999px;font-size:11px;">${accessMap[u.id].length} شرکت</span> <span style="color:#64748b;">${esc(accessMap[u.id].slice(0, 3).join('، '))}${accessMap[u.id].length > 3 ? ' …' : ''}</span>`
+        ? `<span class="pill" style="background:#16a34a;color:#fff;padding:2px 10px;border-radius:999px;font-size:11px;">${accessMap[u.id].length} شرکت</span> <span style="color:#64748b;">${esc(accessMap[u.id].slice(0, 3).join('، '))}${accessMap[u.id].length > 3 ? ' …' : ''}</span>`
         : '<span style="color:#ef4444;font-size:12px;">بدون دسترسی</span>'}</td>
       <td>${u.active ? '<span style="color:#10b981;">✓ فعال</span>' : '<span style="color:#ef4444;">✗ غیرفعال</span>'}</td>
       <td style="display:flex;gap:4px;flex-wrap:wrap;">
@@ -3473,7 +3473,7 @@ async function renderPermsRich(container) {
         <p class="section-title" style="padding:4px 8px;">کاربران</p>
         ${users.map(u => `
           <button class="perms-user ${u.id === __permsSelectedUser ? 'active' : ''}" data-user="${esc(u.id)}"
-            style="display:flex;flex-direction:column;align-items:flex-start;width:100%;padding:10px;border:none;border-radius:8px;background:${u.id === __permsSelectedUser ? '#0b8f89' : 'transparent'};color:${u.id === __permsSelectedUser ? '#fff' : 'inherit'};cursor:pointer;text-align:right;margin-bottom:2px;">
+            style="display:flex;flex-direction:column;align-items:flex-start;width:100%;padding:10px;border:none;border-radius:8px;background:${u.id === __permsSelectedUser ? '#16a34a' : 'transparent'};color:${u.id === __permsSelectedUser ? '#fff' : 'inherit'};cursor:pointer;text-align:right;margin-bottom:2px;">
             <b style="font-size:13px;">${esc(u.name)}</b>
             <small style="opacity:.8;">${ROLE_LABELS2[u.role] || u.role} · ${esc(u.username)}</small>
           </button>`).join('')}
@@ -3504,14 +3504,14 @@ async function __renderPermsMatrix(el, userId) {
         ${g.items.map(it => { idx++; const on = !!effective[it.key];
           return `<label style="display:flex;align-items:center;gap:10px;padding:6px 4px;cursor:${canEdit ? 'pointer' : 'default'};font-size:13px;font-weight:400;border-radius:6px;">
             <input type="checkbox" class="perm-check" data-key="${esc(it.key)}" ${on ? 'checked' : ''} ${canEdit ? '' : 'disabled'}
-              style="width:16px;height:16px;accent-color:#0b8f89;">
+              style="width:16px;height:16px;accent-color:#16a34a;">
             <span>${esc(it.label)}</span>
             ${permData.override && it.key in permData.override ? '<span class="pill" style="background:#fef3c7;color:#92400e;padding:1px 8px;border-radius:999px;font-size:10px;">سفارشی</span>' : ''}
           </label>`; }).join('')}
       </div>`).join('');
     const companiesHtml = companies.map(c => `
-      <label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid ${accessIds.has(c.id) ? '#0b8f89' : '#e2e8f0'};border-radius:8px;margin-bottom:4px;cursor:${canEdit ? 'pointer' : 'default'};font-size:13px;font-weight:400;background:${accessIds.has(c.id) ? 'rgba(11,143,137,.06)' : 'transparent'};">
-        <input type="checkbox" class="company-vis-check" data-company="${esc(c.id)}" ${accessIds.has(c.id) ? 'checked' : ''} ${canEdit ? '' : 'disabled'} style="accent-color:#0b8f89;">
+      <label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid ${accessIds.has(c.id) ? '#16a34a' : '#e2e8f0'};border-radius:8px;margin-bottom:4px;cursor:${canEdit ? 'pointer' : 'default'};font-size:13px;font-weight:400;background:${accessIds.has(c.id) ? 'rgba(11,143,137,.06)' : 'transparent'};">
+        <input type="checkbox" class="company-vis-check" data-company="${esc(c.id)}" ${accessIds.has(c.id) ? 'checked' : ''} ${canEdit ? '' : 'disabled'} style="accent-color:#16a34a;">
         <span>${esc(c.name)} <small style="color:#64748b;">(${esc(c.code)}) · ${KIND_LABELS[c.kind] || 'حقوقی'}</small></span></label>`).join('');
     el.innerHTML = `
       <div class="table-card" style="padding:14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
