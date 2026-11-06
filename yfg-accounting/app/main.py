@@ -1477,7 +1477,7 @@ def service_worker():
 @app.get("/api/status")
 def status():
     with db() as con:
-        return {"setup_needed": con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0, "product": "YFG Accounting Desk", "version": "0.3.0.13"}
+        return {"setup_needed": con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0, "product": "YFG Accounting Desk", "version": "0.3.0.14"}
 
 
 @app.post("/api/setup")
@@ -5197,7 +5197,7 @@ import tempfile
 import urllib.request
 import subprocess
 
-SYSTEM_VERSION = "0.3.0.13"
+SYSTEM_VERSION = "0.3.0.14"
 SYSTEM_REPO_URL = "https://github.com/glcco9819-lang/yafgtax.git"
 SYSTEM_UPDATE_DIR = ROOT / "updates"  # temporary download location
 SYSTEM_BACKUP_DIR = DATA / "backups"
@@ -8164,3 +8164,238 @@ def delete_sso_submission(submission_id: str, request: Request):
     with db() as con:
         con.execute("DELETE FROM sso_submissions WHERE id=?", (submission_id,))
     return {"ok": True}
+
+
+# ========================================================================
+# PHASE 8: AI ENGINE (موتور هوش مصنوعی)
+# ========================================================================
+
+# 8.1: Document Q&A (RAG — Retrieval Augmented Generation)
+AI_SCHEMA = """CREATE TABLE IF NOT EXISTS ai_document_index(
+ id TEXT PRIMARY KEY,
+ document_id TEXT NOT NULL REFERENCES documents(id),
+ company_id TEXT NOT NULL REFERENCES companies(id),
+ content_text TEXT NOT NULL DEFAULT '',
+ keywords TEXT NOT NULL DEFAULT '',
+ indexed_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ai_qa_history(
+ id TEXT PRIMARY KEY,
+ company_id TEXT NOT NULL REFERENCES companies(id),
+ user_id TEXT NOT NULL REFERENCES users(id),
+ question TEXT NOT NULL,
+ answer TEXT NOT NULL,
+ document_ids TEXT NOT NULL DEFAULT '[]',
+ created_at TEXT NOT NULL
+);"""
+
+with db() as con:
+    con.executescript(AI_SCHEMA)
+
+class AIQuestionModel(BaseModel):
+    company_id: str
+    question: str
+    document_ids: list[str] = []  # specific docs, or empty for all
+
+@app.post("/api/ai/ask")
+def ai_ask(payload: AIQuestionModel, request: Request):
+    """Ask a question about company documents (RAG-style search)."""
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        # Search indexed documents for relevant content
+        sql = "SELECT d.id, d.title, d.description, ai.content_text, ai.keywords FROM ai_document_index ai JOIN documents d ON d.id=ai.document_id WHERE ai.company_id=?"
+        params = [payload.company_id]
+        if payload.document_ids:
+            placeholders = ",".join("?" * len(payload.document_ids))
+            sql += f" AND d.id IN ({placeholders})"
+            params.extend(payload.document_ids)
+        rows = con.execute(sql, params).fetchall()
+        
+        # Simple keyword matching (in production, use embeddings + vector search)
+        question_words = set(payload.question.lower().split())
+        scored = []
+        for r in rows:
+            content = (r["title"] + " " + r["description"] + " " + r["content_text"] + " " + r["keywords"]).lower()
+            score = sum(1 for w in question_words if w in content)
+            if score > 0:
+                scored.append((score, dict(r)))
+        scored.sort(key=lambda x: -x[0])
+        top = scored[:5]
+        
+        if not top:
+            answer = "هیچ سند مرتبطی برای پاسخ به این سوال یافت نشد. لطفاً کلمات کلیدی دیگری را امتحان کنید."
+        else:
+            answer_parts = []
+            for score, doc in top:
+                snippet = doc["content_text"][:500] if doc["content_text"] else doc["description"][:200]
+                answer_parts.append(f"📄 {doc['title']}:\n{snippet}...\n")
+            answer = f"بر اساس {len(top)} سند مرتبط:\n\n" + "\n---\n".join(answer_parts)
+        
+        # Save Q&A history
+        qa_id = uid()
+        doc_ids = json.dumps([d["id"] for _, d in top])
+        con.execute("INSERT INTO ai_qa_history VALUES(?,?,?,?,?,?,?)",
+                    (qa_id, payload.company_id, user["id"], payload.question, answer, doc_ids, now()))
+    return {"answer": answer, "matched_documents": len(top), "question": payload.question}
+
+@app.post("/api/ai/index-document")
+def ai_index_document(request: Request, document_id: str = ""):
+    """Index a document for AI search (extract text for RAG)."""
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    if not document_id:
+        raise HTTPException(400, "شناسه سند الزامی است")
+    with db() as con:
+        doc = con.execute("SELECT * FROM documents WHERE id=?", (document_id,)).fetchone()
+        if not doc: raise HTTPException(404, "سند پیدا نشد")
+        # Try to extract text from the file
+        path = DATA / "documents" / doc["stored_name"]
+        content_text = ""
+        if path.exists():
+            try:
+                if doc["mime_type"] == "text/plain":
+                    content_text = path.read_text(errors="replace")[:5000]
+                elif doc["file_name"].endswith(".csv"):
+                    content_text = path.read_text(errors="replace")[:5000]
+                elif doc["file_name"].endswith(".json"):
+                    content_text = path.read_text(errors="replace")[:5000]
+                else:
+                    content_text = doc["description"] or doc["title"]
+            except Exception:
+                content_text = doc["description"] or doc["title"]
+        else:
+            content_text = doc["description"] or doc["title"]
+        
+        # Extract keywords
+        import re as _re
+        words = _re.findall(r'[\u0600-\u06FF\u0080-\u0FFF]{3,}', content_text)
+        keywords = " ".join(list(set(words))[:20])
+        
+        # Check if already indexed
+        existing = con.execute("SELECT id FROM ai_document_index WHERE document_id=?", (document_id,)).fetchone()
+        if existing:
+            con.execute("UPDATE ai_document_index SET content_text=?, keywords=?, indexed_at=? WHERE document_id=?",
+                        (content_text, keywords, now(), document_id))
+        else:
+            con.execute("INSERT INTO ai_document_index VALUES(?,?,?,?,?)",
+                        (uid(), document_id, doc["company_id"], content_text, keywords, now()))
+    return {"ok": True, "indexed_chars": len(content_text), "keywords": keywords}
+
+@app.get("/api/ai/qa-history")
+def ai_qa_history(request: Request, company_id: str = "", limit: int = 20):
+    """Get AI Q&A history."""
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        sql = "SELECT * FROM ai_qa_history WHERE user_id=?"
+        params = [user["id"]]
+        if company_id:
+            sql += " AND company_id=?"
+            params.append(company_id)
+        sql += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        rows = con.execute(sql, params).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            try: d["document_ids"] = json.loads(r["document_ids"])
+            except: d["document_ids"] = []
+            result.append(d)
+        return result
+
+# 8.2: Auto-Categorization (دسته‌بندی خودکار اسناد)
+@app.post("/api/ai/categorize-document")
+def ai_categorize_document(request: Request, document_id: str = ""):
+    """Auto-categorize a document using keyword matching."""
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    if not document_id:
+        raise HTTPException(400, "شناسه سند الزامی است")
+    with db() as con:
+        doc = con.execute("SELECT * FROM documents WHERE id=?", (document_id,)).fetchone()
+        if not doc: raise HTTPException(404, "سند پیدا نشد")
+        # Category keywords
+        category_keywords = {
+            'contract': ['قرارداد', 'توافق', 'تعهد', 'contract', 'agreement'],
+            'invoice': ['فاکتور', 'صورتحساب', 'invoice', 'bill'],
+            'tax': ['مالیات', 'اظهارنامه', 'ارزش افزوده', 'tax', 'VAT'],
+            'audit': ['حسابرسی', 'ممیزی', 'audit', 'review'],
+            'bank': ['بانک', 'شبا', 'حساب', 'bank', 'statement', 'حواله'],
+            'payroll': ['حقوق', 'دستمزد', 'payroll', 'salary'],
+            'other': [],
+        }
+        text = (doc["title"] + " " + doc["description"] + " " + doc.get("tags", "")).lower()
+        best_category = "other"
+        best_score = 0
+        for cat, keywords in category_keywords.items():
+            score = sum(1 for kw in keywords if kw.lower() in text)
+            if score > best_score:
+                best_score = score
+                best_category = cat
+        if best_score > 0:
+            con.execute("UPDATE documents SET category=? WHERE id=?", (best_category, document_id))
+        return {"category": best_category, "confidence": best_score, "keywords_matched": best_score}
+
+# 8.3: Predictive Cash Flow (پیش‌بینی جریان نقدی)
+@app.get("/api/ai/cash-flow-forecast")
+def cash_flow_forecast(request: Request, company_id: str = "", months: int = 3):
+    """Predict cash flow based on historical fee/payment data."""
+    user = current_user(request)
+    require_perm(user, "dashboard.view")
+    with db() as con:
+        # Get historical data (last 6 months)
+        sql = """SELECT strftime('%Y-%m', issue_date) AS month,
+                 SUM(amount) AS billed, SUM(paid_amount) AS paid
+                 FROM fees WHERE issue_date >= date('now', '-6 months')"""
+        params = []
+        if company_id:
+            sql += " AND company_id=?"
+            params.append(company_id)
+        sql += " GROUP BY month ORDER BY month DESC LIMIT 6"
+        rows = con.execute(sql, params).fetchall()
+        history = [dict(r) for r in rows]
+        
+        # Simple moving average forecast
+        if len(history) >= 2:
+            avg_billed = sum(float(r["billed"] or 0) for r in history) / len(history)
+            avg_paid = sum(float(r["paid"] or 0) for r in history) / len(history)
+            collection_rate = avg_paid / avg_billed if avg_billed > 0 else 0.8
+        else:
+            avg_billed = 0
+            avg_paid = 0
+            collection_rate = 0.8
+        
+        # Generate forecast
+        forecast = []
+        from datetime import datetime as _dt, timedelta as _td
+        for i in range(1, months + 1):
+            future_date = (_dt.now() + _td(days=30 * i)).strftime("%Y-%m")
+            # Trend factor (slight growth)
+            trend = 1 + (0.02 * i)
+            forecast.append({
+                "month": future_date,
+                "projected_billing": round(avg_billed * trend),
+                "projected_collection": round(avg_billed * trend * collection_rate),
+                "confidence": max(0.5, 0.9 - (0.1 * i)),
+            })
+        
+        # Risk assessment
+        risk_level = "low"
+        if collection_rate < 0.5:
+            risk_level = "high"
+        elif collection_rate < 0.7:
+            risk_level = "medium"
+        
+        return {
+            "history": history,
+            "forecast": forecast,
+            "collection_rate": round(collection_rate * 100, 1),
+            "avg_monthly_billing": round(avg_billed),
+            "risk_level": risk_level,
+            "recommendations": [
+                f"نرخ وصول شما {round(collection_rate*100)}٪ است. {'هدف: افزایش به ۸۰٪+' if collection_rate < 0.8 else 'عالی!'}",
+                f"میانگین صورتحساب ماهانه: {num(round(avg_billed))} ریال",
+                f"پیش‌بینی {months} ماه آینده: رشد تدریجی",
+            ] if history else ["داده‌های تاریخی کافی نیست. حداقل ۲ ماه داده نیاز است."],
+        }
