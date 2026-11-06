@@ -1,44 +1,48 @@
 @echo off
-chcp 65001 >nul
 echo =================================================
-echo   YFG Accounting Desk - نصب وابستگی‌ها
+echo   YFG Accounting Desk - Install Dependencies
 echo =================================================
 echo.
 
-REM روش ۱: نصب از پوشه محلی (آفلاین)
+REM Method 1: Install from local packages (offline)
 if exist "..\yfg-packages" (
-    echo [روش ۱] نصب از پوشه محلی (آفلاین)...
+    echo [Method 1] Installing from local packages (offline)...
     pip install --no-index --find-links=..\yfg-packages -r requirements.txt
     if not errorlevel 1 (
-        echo ✓ نصب از پوشه محلی موفق بود
+        echo.
+        echo SUCCESS: All dependencies installed from local packages
         goto :done
     )
-    echo ✗ نصب از پوشه محلی ناموفق بود، تلاش با روش آنلاین...
+    echo FAILED: Local install failed, trying online...
+    echo.
 )
 
-REM روش ۲: نصب آنلاین با تایم‌اوت بلند
-echo [روش ۲] نصب آنلاین (با تایم‌اوت ۱۲۰ ثانیه)...
-pip install --timeout 120 -r requirements.txt
+REM Method 2: Install online with long timeout
+echo [Method 2] Installing online (timeout=300s)...
+pip install --timeout 300 -r requirements.txt
 if errorlevel 1 (
-    echo ✗ نصب ناموفق بود
     echo.
-    echo راه‌حل‌های جایگزین:
-    echo   1. از VPN یا پراکسی استفاده کنید
-    echo   2. دستی نصب کنید:
+    echo FAILED: Online install also failed
+    echo.
+    echo Alternative solutions:
+    echo   1. Use a VPN
+    echo   2. Install manually one by one:
     echo      pip install fastapi
-    echo      pip install "uvicorn"
+    echo      pip install uvicorn
     echo      pip install python-multipart
     echo      pip install openpyxl
     echo      pip install cryptography
-    echo   3. از آینه ایرانی استفاده کنید:
-    echo      pip install -i https://mirror.py encountered.org/pypi/simple -r requirements.txt
+    echo   3. Use longer timeout:
+    echo      pip install --timeout 600 -r requirements.txt
+    echo.
     pause
     exit /b 1
 )
 
 :done
 echo.
-echo ✓ همه وابستگی‌ها نصب شد
+echo SUCCESS: All dependencies installed!
 echo.
-echo حالا می‌توانید start.bat را اجرا کنید
+echo Now run start.bat to launch the application
+echo.
 pause
