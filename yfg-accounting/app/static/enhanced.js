@@ -1,8 +1,6 @@
 // YFG Enhanced Features v2.0 - Fixed version
 // Adds: Dashboard Charts, Kanban View, Time Tracking, Chat, Automations, ISO 30414
 
-(function() {
-  'use strict';
   
   const CHART_COLORS = ['#0b8f89','#f59e0b','#ef4444','#8b5cf6','#3b82f6','#10b981','#ec4899','#f97316'];
   let charts = {};
@@ -1046,7 +1044,6 @@
       toast('گزارش CSV دانلود شد');
     } catch(e) { toast(e.message, true); }
   }
-})();
 
   // ============ PERFORMANCE VIEW (ثبت عملکرد) - LEGACY ============
   // (Removed — view-performance-entries is now managed by renderPerformanceEntries in performance.js.

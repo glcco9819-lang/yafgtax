@@ -8864,3 +8864,104 @@ def revenue_analytics(request: Request, period: str = "monthly"):
             "collection_rate": round(total_collected / total_billed * 100, 1) if total_billed > 0 else 0,
             "average_monthly": round(total_billed / max(len(data), 1)),
         }
+
+
+# ========================================================================
+# SEED DEMO DATA (داده‌های نمونه)
+# ========================================================================
+@app.post("/api/seed")
+def seed_demo_data(request: Request):
+    """Create demo data: companies, persons, users, tasks, contracts, fees, etc."""
+    user = current_user(request)
+    if user["role"] != "ADMIN":
+        raise HTTPException(403, "فقط مدیر می‌تواند داده نمونه بسازد")
+    
+    created = {"companies": 0, "persons": 0, "users": 0, "tasks": 0, "contracts": 0, "fees": 0, "chat_channels": 0}
+    
+    with db() as con:
+        # Create demo companies (if none exist)
+        existing_companies = con.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
+        if existing_companies == 0:
+            companies = [
+                ("1001", "شرکت بازرگانی پارس آریا", "LEGAL", "14003254678", "021-88991234", "تهران، خیابان ولیعصر", "1963773344", "محمد رضایی", "09121110001", "شرکت فعال در حوزه واردات"),
+                ("1002", "فروشگاه زنجیره‌ای رفاه", "LEGAL", "10762543198", "021-66445566", "تهران، خیابان جمهوری", "1314766543", "فاطمه احمدی", "09121110002", "فروشگاه زنجیره‌ای با 42 شعبه"),
+                ("1003", "شرکت صنایع آلومینیوم ایران", "LEGAL", "10321547890", "021-33445566", "تهران، شهرک صنعتی شمس‌آباد", "1837654321", "حسین موسوی", "09121110003", "تولید پروفیل آلومینیوم"),
+            ]
+            comp_ids = []
+            for code, name, kind, nid, phone, addr, postal, mgr, mgr_phone, desc in companies:
+                cid = uid()
+                con.execute("""INSERT INTO companies (id,code,name,active,created_at,kind,first_name,last_name,national_id,phone,address,postal_code,manager_name,manager_phone,description) 
+                    VALUES(?,?,?,1,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (cid, code, name, now(), kind, "", "", nid, phone, addr, postal, mgr, mgr_phone, desc))
+                comp_ids.append(cid)
+                created["companies"] += 1
+        else:
+            comp_ids = [r["id"] for r in con.execute("SELECT id FROM companies").fetchall()]
+        
+        # Create demo employees (if none exist besides admin)
+        existing_users = con.execute("SELECT COUNT(*) FROM users WHERE role='EMPLOYEE'").fetchone()[0]
+        if existing_users == 0 and len(comp_ids) > 0:
+            employees = [
+                ("کارمند تست یک", "emp1", "EMPLOYEE", comp_ids[0]),
+                ("کارمند تست دو", "emp2", "EMPLOYEE", comp_ids[1] if len(comp_ids) > 1 else comp_ids[0]),
+                ("کارمند تست سه", "emp3", "EMPLOYEE", comp_ids[2] if len(comp_ids) > 2 else comp_ids[0]),
+            ]
+            for name, username, role, comp_id in employees:
+                eid = uid()
+                con.execute("INSERT INTO users (id,name,username,password_hash,role,active,created_at,first_name,last_name,phone,permissions) VALUES(?,?,?,?,?,1,?,?,?,?,NULL)",
+                    (eid, name, username, password_hash("emp123"), role, now(), name, "", "", ))
+                # Assign company
+                con.execute("INSERT OR IGNORE INTO company_access VALUES(?,?)", (eid, comp_id))
+                created["users"] += 1
+        
+        # Create demo persons
+        existing_persons = con.execute("SELECT COUNT(*) FROM persons").fetchone()[0]
+        if existing_persons == 0 and comp_ids:
+            persons = [
+                ("P001", "مهدی", "کریمی", "0098712345", "09123334456", comp_ids[0]),
+                ("P002", "زهرا", "حسینی", "0098719876", "09151112233", comp_ids[1] if len(comp_ids) > 1 else comp_ids[0]),
+                ("P003", "حسن", "علیپور", "0087612345", "09191110022", None),
+            ]
+            for code, fn, ln, nid, phone, comp_id in persons:
+                con.execute("INSERT INTO persons (id,code,first_name,last_name,national_id,phone,active,created_by,created_at) VALUES(?,?,?,?,?,?,1,?,?)",
+                    (uid(), code, fn, ln, nid, phone, user["id"], now()))
+                created["persons"] += 1
+        
+        # Create demo tasks
+        existing_tasks = con.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+        if existing_tasks == 0 and comp_ids:
+            emp_ids = [r["id"] for r in con.execute("SELECT id FROM users WHERE role='EMPLOYEE' AND active=1").fetchall()]
+            if emp_ids:
+                tasks = [
+                    ("ثبت اسناد فروردین ۱۴۰۳", comp_ids[0], emp_ids[0], "NORMAL", 1),
+                    ("بستن دفاتر پایان دوره", comp_ids[0], emp_ids[0], "IMPORTANT", 2),
+                    ("اظهارنامه مالیاتی سالانه", comp_ids[1] if len(comp_ids) > 1 else comp_ids[0], emp_ids[-1], "CRITICAL", 3),
+                ]
+                for title, comp_id, assignee, priority, weight in tasks:
+                    tid = uid()
+                    ts = now()
+                    con.execute("INSERT INTO tasks (id,company_id,title,description,fiscal_period,scope,priority,weight,due_date,status,progress,assignee_id,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (tid, comp_id, title, "", "1403/01", "", priority, weight, "2026-12-31", "ASSIGNED", 0, assignee, user["id"], ts, ts))
+                    created["tasks"] += 1
+        
+        # Create demo contracts
+        if comp_ids and con.execute("SELECT COUNT(*) FROM contracts").fetchone()[0] == 0:
+            con.execute("INSERT INTO contracts (id,code,title,company_id,person_id,start_date,end_date,value_amount,currency,status,contract_type,subject,notes,attachment_id,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (uid(), "C1403-001", "حسابداری ماهانه ۱۴۰۳", comp_ids[0], None, "2026-01-01", "2026-12-31", 480000000, "IRR", "ACTIVE", "accounting", "ثبت دفاتر و گزارش ماهانه", "", None, user["id"], now(), now()))
+            created["contracts"] += 1
+        
+        # Create demo fees
+        if comp_ids and con.execute("SELECT COUNT(*) FROM fees").fetchone()[0] == 0:
+            con.execute("INSERT INTO fees (id,company_id,contract_id,title,fee_type,amount,currency,period_start,period_end,issue_date,due_date,status,paid_amount,paid_date,notes,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (uid(), comp_ids[0], None, "حق‌الزحمه فروردین ۱۴۰۳", "monthly", 40000000, "IRR", "2026-03-01", "2026-03-31", "2026-04-01", "2026-05-01", "UNPAID", 0, None, "", user["id"], now(), now()))
+            created["fees"] += 1
+        
+        # Create demo tax deadlines
+        if comp_ids and con.execute("SELECT COUNT(*) FROM tax_deadlines").fetchone()[0] == 0:
+            con.execute("INSERT INTO tax_deadlines (id,company_id,deadline_type,title,due_date,period_label,amount,status,notes,assigned_user_id,completed_at,completed_by,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (uid(), comp_ids[0], "VAT_QUARTERLY", "ارزش افزوده زمستان ۱۴۰۳", "2026-03-21", "زمستان ۱۴۰۳", 50000000, "PENDING", "", None, None, None, user["id"], now(), now()))
+            created["tasks"] += 1  # reuse counter for display
+        
+        con.commit()
+    
+    return {"ok": True, "created": created, "message": "داده‌های نمونه ساخته شد. صفحه را رفرش کنید."}
