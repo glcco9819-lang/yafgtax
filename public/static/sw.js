@@ -1,5 +1,5 @@
-// YFG Service Worker v27 — version 0.3.0.14 — Phase 8: AI engine
-const CACHE='yfg-desk-v27';
+// YFG Service Worker v28 — version 0.3.0.15 — Phases 9+10: collaboration + analytics
+const CACHE='yfg-desk-v28';
 const ASSETS=['/','/static/style.css','/static/themes.css','/static/app.js','/static/performance.js','/static/enhanced.js','/static/themes.js','/static/icon.svg','/static/icon-192.png','/static/icon-512.png','/manifest.webmanifest'];
 
 self.addEventListener('install', e => e.waitUntil(

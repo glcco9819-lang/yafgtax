@@ -1477,7 +1477,7 @@ def service_worker():
 @app.get("/api/status")
 def status():
     with db() as con:
-        return {"setup_needed": con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0, "product": "YFG Accounting Desk", "version": "0.3.0.14"}
+        return {"setup_needed": con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0, "product": "YFG Accounting Desk", "version": "0.3.0.15"}
 
 
 @app.post("/api/setup")
@@ -5197,7 +5197,7 @@ import tempfile
 import urllib.request
 import subprocess
 
-SYSTEM_VERSION = "0.3.0.14"
+SYSTEM_VERSION = "0.3.0.15"
 SYSTEM_REPO_URL = "https://github.com/glcco9819-lang/yafgtax.git"
 SYSTEM_UPDATE_DIR = ROOT / "updates"  # temporary download location
 SYSTEM_BACKUP_DIR = DATA / "backups"
@@ -8398,4 +8398,324 @@ def cash_flow_forecast(request: Request, company_id: str = "", months: int = 3):
                 f"میانگین صورتحساب ماهانه: {num(round(avg_billed))} ریال",
                 f"پیش‌بینی {months} ماه آینده: رشد تدریجی",
             ] if history else ["داده‌های تاریخی کافی نیست. حداقل ۲ ماه داده نیاز است."],
+        }
+
+
+# ========================================================================
+# PHASE 9: REAL-TIME COLLABORATION (همکاری بلادرنگ)
+# ========================================================================
+
+# 9.1: Shared Notes (یادداشت مشترک روی اسناد/تسک‌ها)
+NOTES_SCHEMA = """CREATE TABLE IF NOT EXISTS shared_notes(
+ id TEXT PRIMARY KEY,
+ entity_type TEXT NOT NULL, -- task, document, company, contract, invoice
+ entity_id TEXT NOT NULL,
+ user_id TEXT NOT NULL REFERENCES users(id),
+ body TEXT NOT NULL,
+ is_pinned INTEGER NOT NULL DEFAULT 0,
+ is_internal INTEGER NOT NULL DEFAULT 1,
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);"""
+
+with db() as con:
+    con.executescript(NOTES_SCHEMA)
+
+class NoteCreateModel(BaseModel):
+    entity_type: str
+    entity_id: str
+    body: str
+    is_pinned: int = 0
+    is_internal: int = 1
+
+@app.get("/api/notes/{entity_type}/{entity_id}")
+def list_notes(entity_type: str, entity_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "dashboard.view")
+    with db() as con:
+        rows = con.execute("""SELECT n.*, u.name AS user_name FROM shared_notes n
+            JOIN users u ON u.id=n.user_id
+            WHERE n.entity_type=? AND n.entity_id=?
+            ORDER BY n.is_pinned DESC, n.created_at DESC""",
+            (entity_type, entity_id)).fetchall()
+        return [dict(r) for r in rows]
+
+@app.post("/api/notes")
+def create_note(payload: NoteCreateModel, request: Request):
+    user = current_user(request)
+    nid = uid()
+    with db() as con:
+        con.execute("INSERT INTO shared_notes VALUES(?,?,?,?,?,?,?,?,?)",
+                    (nid, payload.entity_type, payload.entity_id, user["id"],
+                     payload.body, payload.is_pinned, payload.is_internal, now(), now()))
+    return {"id": nid}
+
+@app.patch("/api/notes/{note_id}")
+def update_note(note_id: str, request: Request, body: str = "", is_pinned: int | None = None):
+    user = current_user(request)
+    with db() as con:
+        existing = con.execute("SELECT * FROM shared_notes WHERE id=? AND user_id=?", (note_id, user["id"])).fetchone()
+        if not existing: raise HTTPException(404, "یادداشت پیدا نشد")
+        updates = []
+        params = []
+        if body:
+            updates.append("body=?"); params.append(body)
+        if is_pinned is not None:
+            updates.append("is_pinned=?"); params.append(is_pinned)
+        if updates:
+            updates.append("updated_at=?"); params.append(now())
+            params.append(note_id)
+            con.execute(f"UPDATE shared_notes SET {', '.join(updates)} WHERE id=?", params)
+    return {"ok": True}
+
+@app.delete("/api/notes/{note_id}")
+def delete_note(note_id: str, request: Request):
+    user = current_user(request)
+    with db() as con:
+        con.execute("DELETE FROM shared_notes WHERE id=? AND user_id=?", (note_id, user["id"]))
+    return {"ok": True}
+
+# 9.2: Activity Feed (خط زمانی فعالیت)
+@app.get("/api/activity-feed")
+def activity_feed(request: Request, limit: int = 30):
+    """Unified activity feed from audit events, chat, tasks, and notes."""
+    user = current_user(request)
+    require_perm(user, "dashboard.view")
+    with db() as con:
+        # Audit events
+        audit = con.execute("""SELECT ae.id, ae.actor, ae.action, ae.entity_type, ae.entity_id,
+            ae.created_at, u.name AS user_name FROM audit_events ae
+            LEFT JOIN users u ON u.id=ae.actor
+            ORDER BY ae.created_at DESC LIMIT ?""", (limit,)).fetchall()
+        events = []
+        for a in audit:
+            events.append({
+                "id": a["id"],
+                "type": "audit",
+                "user": a["user_name"] or "سیستم",
+                "action": a["action"],
+                "entity": a["entity_type"],
+                "timestamp": a["created_at"],
+                "description": f"{a['action']} روی {a['entity_type']}",
+            })
+        events.sort(key=lambda e: e["timestamp"], reverse=True)
+        return events[:limit]
+
+# 9.3: Client Communication Log (ثبت ارتباط با مشتری)
+COMM_SCHEMA = """CREATE TABLE IF NOT EXISTS client_communications(
+ id TEXT PRIMARY KEY,
+ company_id TEXT NOT NULL REFERENCES companies(id),
+ comm_type TEXT NOT NULL, -- call, email, meeting, message, visit
+ subject TEXT NOT NULL,
+ description TEXT NOT NULL DEFAULT '',
+ outcome TEXT NOT NULL DEFAULT '',
+ follow_up_date TEXT,
+ follow_up_done INTEGER NOT NULL DEFAULT 0,
+ user_id TEXT NOT NULL REFERENCES users(id),
+ created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);"""
+
+with db() as con:
+    con.executescript(COMM_SCHEMA)
+
+class CommunicationModel(BaseModel):
+    company_id: str
+    comm_type: str = "call"
+    subject: str
+    description: str = ""
+    outcome: str = ""
+    follow_up_date: str | None = None
+
+@app.get("/api/communications")
+def list_communications(request: Request, company_id: str = ""):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    with db() as con:
+        sql = """SELECT c.*, comp.name AS company_name, u.name AS user_name
+                 FROM client_communications c
+                 LEFT JOIN companies comp ON comp.id=c.company_id
+                 LEFT JOIN users u ON u.id=c.user_id WHERE 1=1"""
+        params = []
+        if company_id:
+            sql += " AND c.company_id=?"; params.append(company_id)
+        sql += " ORDER BY c.created_at DESC LIMIT 200"
+        rows = con.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+@app.post("/api/communications")
+def create_communication(payload: CommunicationModel, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.view")
+    cid = uid()
+    with db() as con:
+        con.execute("""INSERT INTO client_communications
+            (id, company_id, comm_type, subject, description, outcome, follow_up_date, follow_up_done, user_id, created_at, updated_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            (cid, payload.company_id, payload.comm_type, payload.subject, payload.description,
+             payload.outcome, payload.follow_up_date, 0, user["id"], now(), now()))
+    return {"id": cid}
+
+@app.patch("/api/communications/{comm_id}")
+def update_communication(comm_id: str, request: Request, follow_up_done: int = 1):
+    user = current_user(request)
+    with db() as con:
+        con.execute("UPDATE client_communications SET follow_up_done=?, updated_at=? WHERE id=?",
+                    (follow_up_done, now(), comm_id))
+    return {"ok": True}
+
+@app.delete("/api/communications/{comm_id}")
+def delete_communication(comm_id: str, request: Request):
+    user = current_user(request)
+    require_perm(user, "customers.manage")
+    with db() as con:
+        con.execute("DELETE FROM client_communications WHERE id=?", (comm_id,))
+    return {"ok": True}
+
+
+# ========================================================================
+# PHASE 10: PREDICTIVE ANALYTICS (تحلیلی پیش‌بینانه)
+# ========================================================================
+
+# 10.1: Client Risk Scoring (امتیازدهی ریسک مشتری)
+@app.get("/api/analytics/client-risk")
+def client_risk_scoring(request: Request, company_id: str = ""):
+    """Score each client's risk based on payment history, overdue, and activity."""
+    user = current_user(request)
+    require_perm(user, "dashboard.view")
+    with db() as con:
+        sql = """SELECT c.id, c.name,
+            (SELECT COUNT(*) FROM fees f WHERE f.company_id=c.id AND f.status='OVERDUE') AS overdue_count,
+            (SELECT COUNT(*) FROM fees f WHERE f.company_id=c.id AND f.status IN ('UNPAID','PARTIAL','OVERDUE')) AS unpaid_count,
+            (SELECT COUNT(*) FROM fees f WHERE f.company_id=c.id) AS total_fees,
+            (SELECT SUM(f.amount - f.paid_amount) FROM fees f WHERE f.company_id=c.id AND f.status IN ('UNPAID','PARTIAL','OVERDUE')) AS outstanding,
+            (SELECT COUNT(*) FROM tax_deadlines td WHERE td.company_id=c.id AND td.status='PENDING' AND td.due_date < ?) AS overdue_deadlines,
+            (SELECT COUNT(*) FROM tasks t WHERE t.company_id=c.id AND t.due_date < ? AND t.status NOT IN ('APPROVED','APPROVED_WITH_EXCEPTION','CANCELLED')) AS overdue_tasks
+            FROM companies c WHERE c.active=1"""
+        today = now()[:10]
+        rows = con.execute(sql, (today, today)).fetchall()
+        results = []
+        for r in rows:
+            d = dict(r)
+            # Calculate risk score (0-100, higher = more risk)
+            risk = 0
+            risk += d["overdue_count"] * 25
+            risk += min(d["unpaid_count"] * 5, 25)
+            risk += d["overdue_deadlines"] * 15
+            risk += min(d["overdue_tasks"] * 5, 15)
+            risk = min(risk, 100)
+            d["risk_score"] = risk
+            d["risk_level"] = "high" if risk >= 60 else "medium" if risk >= 30 else "low"
+            d["outstanding"] = float(d["outstanding"] or 0)
+            results.append(d)
+        results.sort(key=lambda x: -x["risk_score"])
+        return results[:20]  # top 20 risky clients
+
+# 10.2: Client Profitability (سودآوری مشتری)
+@app.get("/api/analytics/client-profitability")
+def client_profitability(request: Request, company_id: str = ""):
+    """Calculate profitability per client based on fees collected vs time spent."""
+    user = current_user(request)
+    require_perm(user, "dashboard.view")
+    with db() as con:
+        sql = """SELECT c.id, c.name,
+            (SELECT COALESCE(SUM(f.paid_amount), 0) FROM fees f WHERE f.company_id=c.id AND f.status!='CANCELLED') AS total_revenue,
+            (SELECT COALESCE(SUM(te.duration_seconds), 0) FROM time_entries te
+             JOIN tasks t ON t.id=te.task_id WHERE t.company_id=c.id) AS total_time_seconds,
+            (SELECT COUNT(*) FROM tasks t WHERE t.company_id=c.id) AS task_count
+            FROM companies c WHERE c.active=1"""
+        if company_id:
+            sql += " AND c.id=?"
+            rows = con.execute(sql, (company_id,)).fetchall()
+        else:
+            rows = con.execute(sql).fetchall()
+        results = []
+        hourly_rate = 500000  # 500k IRR per hour
+        for r in rows:
+            d = dict(r)
+            revenue = float(d["total_revenue"])
+            time_hours = float(d["total_time_seconds"]) / 3600
+            cost = time_hours * hourly_rate
+            profit = revenue - cost
+            d["revenue"] = revenue
+            d["time_hours"] = round(time_hours, 1)
+            d["estimated_cost"] = round(cost)
+            d["profit"] = round(profit)
+            d["margin"] = round((profit / revenue * 100) if revenue > 0 else 0, 1)
+            d["profitability"] = "profitable" if profit > 0 else "loss" if profit < 0 else "break_even"
+            results.append(d)
+        results.sort(key=lambda x: -x["profit"])
+        return results
+
+# 10.3: Team Capacity Analysis (تحلیل ظرفیت تیم)
+@app.get("/api/analytics/team-capacity")
+def team_capacity(request: Request):
+    """Analyze team workload and capacity."""
+    user = current_user(request)
+    require_perm(user, "dashboard.view")
+    with db() as con:
+        rows = con.execute("""SELECT
+            u.id, u.name,
+            COUNT(t.id) AS total_tasks,
+            SUM(CASE WHEN t.status='ASSIGNED' THEN 1 ELSE 0 END) AS assigned,
+            SUM(CASE WHEN t.status='IN_PROGRESS' THEN 1 ELSE 0 END) AS in_progress,
+            SUM(CASE WHEN t.status='SUBMITTED' THEN 1 ELSE 0 END) AS submitted,
+            SUM(CASE WHEN t.status IN ('APPROVED','APPROVED_WITH_EXCEPTION') THEN 1 ELSE 0 END) AS completed,
+            SUM(CASE WHEN t.weight=3 THEN 1 ELSE 0 END) AS critical_tasks,
+            SUM(CASE WHEN t.due_date < ? AND t.status NOT IN ('APPROVED','APPROVED_WITH_EXCEPTION','CANCELLED') THEN 1 ELSE 0 END) AS overdue,
+            (SELECT SUM(te.duration_seconds) FROM time_entries te WHERE te.user_id=u.id) AS total_seconds
+            FROM users u LEFT JOIN tasks t ON t.assignee_id=u.id
+            WHERE u.active=1
+            GROUP BY u.id ORDER BY total_tasks DESC""", (now()[:10],)).fetchall()
+        results = []
+        for r in rows:
+            d = dict(r)
+            d["total_hours"] = round(float(d["total_seconds"] or 0) / 3600, 1)
+            # Capacity utilization (assume 160 hours/month per employee)
+            capacity_hours = 160
+            used_hours = d["total_hours"]
+            d["capacity_utilization"] = min(round(used_hours / capacity_hours * 100, 1), 100) if capacity_hours > 0 else 0
+            d["available_capacity"] = max(capacity_hours - used_hours, 0)
+            d["workload_status"] = "overloaded" if d["overdue"] > 2 else "busy" if d["in_progress"] > 5 else "balanced" if d["assigned"] > 0 else "available"
+            results.append(d)
+        return results
+
+# 10.4: Revenue Analytics (تحلیل درآمد)
+@app.get("/api/analytics/revenue")
+def revenue_analytics(request: Request, period: str = "monthly"):
+    """Revenue analytics with trend analysis."""
+    user = current_user(request)
+    require_perm(user, "dashboard.view")
+    with db() as con:
+        if period == "quarterly":
+            sql = """SELECT
+                strftime('%Y-Q', issue_date) || ((strftime('%m', issue_date)-1)/3+1) AS period,
+                SUM(amount) AS billed, SUM(paid_amount) AS collected
+                FROM fees WHERE status!='CANCELLED' AND issue_date >= date('now', '-12 months')
+                GROUP BY period ORDER BY period"""
+        else:
+            sql = """SELECT
+                strftime('%Y-%m', issue_date) AS period,
+                SUM(amount) AS billed, SUM(paid_amount) AS collected
+                FROM fees WHERE status!='CANCELLED' AND issue_date >= date('now', '-12 months')
+                GROUP BY period ORDER BY period"""
+        rows = con.execute(sql).fetchall()
+        data = [dict(r) for r in rows]
+        # Calculate growth rate
+        for i, d in enumerate(data):
+            if i > 0:
+                prev = float(data[i-1]["billed"] or 0)
+                curr = float(d["billed"] or 0)
+                d["growth_rate"] = round(((curr - prev) / prev * 100) if prev > 0 else 0, 1)
+            else:
+                d["growth_rate"] = 0
+        # Summary
+        total_billed = sum(float(r["billed"] or 0) for r in data)
+        total_collected = sum(float(r["collected"] or 0) for r in data)
+        return {
+            "period_data": data,
+            "total_billed": total_billed,
+            "total_collected": total_collected,
+            "collection_rate": round(total_collected / total_billed * 100, 1) if total_billed > 0 else 0,
+            "average_monthly": round(total_billed / max(len(data), 1)),
         }
