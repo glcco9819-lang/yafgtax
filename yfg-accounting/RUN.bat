@@ -3,7 +3,7 @@ cd /d "%~dp0"
 title YFG Accounting Desk
 
 echo =================================================
-echo   YFG Accounting Desk v0.3.0.16
+echo   YFG Accounting Desk v0.3.0.17
 echo =================================================
 echo.
 

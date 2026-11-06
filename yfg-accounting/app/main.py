@@ -1477,7 +1477,7 @@ def service_worker():
 @app.get("/api/status")
 def status():
     with db() as con:
-        return {"setup_needed": con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0, "product": "YFG Accounting Desk", "version": "0.3.0.16"}
+        return {"setup_needed": con.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0, "product": "YFG Accounting Desk", "version": "0.3.0.17"}
 
 
 @app.post("/api/setup")
@@ -1488,7 +1488,7 @@ def setup(payload: SetupModel, request: Request):
         if not re.fullmatch(r"[A-Za-z0-9_.-]+", payload.username):
             raise HTTPException(400, "نام کاربری فقط میتواند شامل حروف انگلیسی، عدد و . _ - باشد")
         user_id = uid()
-        con.execute("INSERT INTO users VALUES(?,?,?,?,?,?,?)", (user_id, payload.name, payload.username.lower(), password_hash(payload.password), "ADMIN", 1, now()))
+        con.execute("INSERT INTO users (id,name,username,password_hash,role,active,created_at,first_name,last_name,phone,permissions) VALUES(?,?,?,?,?,?,?,?,?,?,?)", (user_id, payload.name, payload.username.lower(), password_hash(payload.password), "ADMIN", 1, now(), "", "", "", None))
         audit(con, user_id, "INITIAL_SETUP", "user", user_id)
         issue_session(con, user_id, request)
         return {"ok": True, "user": {"id": user_id, "name": payload.name, "username": payload.username, "role": "ADMIN"}}
@@ -5197,7 +5197,7 @@ import tempfile
 import urllib.request
 import subprocess
 
-SYSTEM_VERSION = "0.3.0.16"
+SYSTEM_VERSION = "0.3.0.17"
 SYSTEM_REPO_URL = "https://github.com/glcco9819-lang/yafgtax.git"
 SYSTEM_UPDATE_DIR = ROOT / "updates"  # temporary download location
 SYSTEM_BACKUP_DIR = DATA / "backups"
